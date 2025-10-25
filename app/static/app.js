@@ -552,6 +552,11 @@ function createPolygonsFromGeometry(geometry) {
     if (!Array.isArray(polygon) || !polygon.length) {
       continue;
     }
+    return {
+      type: 'Polygon',
+      coordinates: [ring]
+    };
+  }
 
     const paths = polygon
       .map((ring) => {
