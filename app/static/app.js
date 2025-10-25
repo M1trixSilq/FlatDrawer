@@ -7,15 +7,12 @@ const STATUS_COLORS = {
 const COMMENT_ZOOM_THRESHOLD = 15;
 
 let mapInstance;
-let infoWindow = null;
-let lastZoomLevel = 4;
 let openHouseId = null;
-let pendingInfoWindowContext = null;
 
 const houseState = new Map();
-const overlayState = new Map();
-const geometryCache = new Map();
+const placemarkState = new Map();
 const commentsCache = new Map();
+const activeStatusFilters = new Set(Object.keys(STATUS_COLORS));
 
 const creationModal = {
   container: null,
@@ -165,7 +162,12 @@ async function handleCreateModalSubmit(event) {
 
   const status = elements.statusSelect ? elements.statusSelect.value : 'yellow';
   const comment = elements.commentInput ? elements.commentInput.value.trim() : '';
-  const { address, coords, geometry } = activeCreationContext;
+  const { address, coords } = activeCreationContext;
+
+  if (!Array.isArray(coords) || coords.length !== 2) {
+    showNotification('Не удалось определить координаты для новой точки', 'error');
+    return;
+  }
 
   creationInProgress = true;
   if (elements.submitButton) {
@@ -175,8 +177,8 @@ async function handleCreateModalSubmit(event) {
   try {
     const payload = {
       address,
-      latitude: coords[0],
-      longitude: coords[1],
+      latitude: Number(coords[0]),
+      longitude: Number(coords[1]),
       status
     };
 
@@ -195,17 +197,12 @@ async function handleCreateModalSubmit(event) {
     const newHouse = await response.json();
     houseState.set(newHouse.id, newHouse);
 
-    if (geometry) {
-      geometryCache.set(newHouse.id, geometry);
-    }
-
-    const overlayRecord = await createHouseOverlay(newHouse, geometry);
+    const placemark = createHousePlacemark(newHouse);
     closeCreateModal();
     showNotification('Карточка дома создана');
 
-    if (overlayRecord) {
-      const anchor = getOverlayAnchorPosition(overlayRecord, [newHouse.latitude, newHouse.longitude]);
-      await handleOverlayOpen(newHouse, overlayRecord, anchor);
+    if (placemark) {
+      await openHouseBalloon(newHouse, placemark);
     }
 
     if (comment) {
@@ -217,16 +214,8 @@ async function handleCreateModalSubmit(event) {
         });
         const updatedComments = [newComment, ...(commentsCache.get(newHouse.id) || [])];
         commentsCache.set(newHouse.id, updatedComments);
-        const targetOverlay = overlayState.get(newHouse.id);
-        if (targetOverlay && infoWindow && openHouseId === newHouse.id) {
-          pendingInfoWindowContext = {
-            house: newHouse,
-            overlayRecord: targetOverlay,
-            comments: updatedComments
-          };
-          infoWindow.setContent(
-            renderBalloonContent(newHouse, updatedComments, { enableComments: true })
-          );
+        if (placemark) {
+          await openHouseBalloon(newHouse, placemark);
         }
         showNotification('Комментарий добавлен');
       } catch (commentError) {
@@ -245,75 +234,113 @@ async function handleCreateModalSubmit(event) {
   }
 }
 
-function initMap() {
-  const mapElement = document.getElementById('map');
-  if (!mapElement) {
-    showNotification('Элемент карты не найден на странице', 'error');
-    return;
-  }
+function waitForYandexMaps(timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
 
-  if (!window.google || !google.maps) {
-    showNotification('Скрипт Google Maps не загрузился', 'error');
-    return;
-  }
-
-  mapInstance = new google.maps.Map(mapElement, {
-    center: { lat: 61.524, lng: 105.3188 },
-    zoom: 4,
-    mapTypeId: 'roadmap',
-    disableDoubleClickZoom: true,
-    zoomControl: true,
-    streetViewControl: false,
-    mapTypeControl: true,
-    fullscreenControl: true
-  });
-
-  infoWindow = new google.maps.InfoWindow();
-  infoWindow.addListener('closeclick', () => {
-    openHouseId = null;
-    pendingInfoWindowContext = null;
-  });
-
-  infoWindow.addListener('domready', onInfoWindowDomReady);
-
-  lastZoomLevel = mapInstance.getZoom();
-
-  mapInstance.addListener('zoom_changed', () => {
-    const newZoom = mapInstance.getZoom();
-    if (typeof newZoom !== 'number') {
-      return;
-    }
-
-    if (openHouseId !== null && newZoom !== lastZoomLevel) {
-      const crossedThreshold =
-        (lastZoomLevel < COMMENT_ZOOM_THRESHOLD && newZoom >= COMMENT_ZOOM_THRESHOLD) ||
-        (lastZoomLevel >= COMMENT_ZOOM_THRESHOLD && newZoom < COMMENT_ZOOM_THRESHOLD);
-
-      if (crossedThreshold) {
-        const house = houseState.get(openHouseId);
-        const overlayRecord = overlayState.get(openHouseId);
-        if (house && overlayRecord) {
-          const anchor = getOverlayAnchorPosition(overlayRecord, [house.latitude, house.longitude]);
-          handleOverlayOpen(house, overlayRecord, anchor);
-        }
+    function checkReady() {
+      if (window.ymaps && typeof window.ymaps.ready === 'function') {
+        resolve();
+        return;
       }
+
+      if (Date.now() - start >= timeoutMs) {
+        reject(new Error('Yandex Maps script not loaded'));
+        return;
+      }
+
+      setTimeout(checkReady, 200);
     }
 
-    lastZoomLevel = newZoom;
+    checkReady();
+  });
+}
+
+function initStatusFilters() {
+  const inputs = document.querySelectorAll('input[data-status-filter]');
+  if (!inputs.length) {
+    return;
+  }
+
+  activeStatusFilters.clear();
+  inputs.forEach((input) => {
+    if (input.checked) {
+      activeStatusFilters.add(input.value);
+    }
+
+    input.addEventListener('change', () => {
+      if (input.checked) {
+        activeStatusFilters.add(input.value);
+      } else {
+        activeStatusFilters.delete(input.value);
+      }
+      updateAllPlacemarkVisibility();
+    });
   });
 
-  mapInstance.addListener('dblclick', (event) => {
-    if (event && typeof event.stop === 'function') {
-      event.stop();
+  if (!activeStatusFilters.size) {
+    Object.keys(STATUS_COLORS).forEach((status) => activeStatusFilters.add(status));
+  }
+}
+
+function updatePlacemarkVisibility(houseId) {
+  const placemark = placemarkState.get(houseId);
+  const house = houseState.get(houseId);
+  if (!placemark || !house) {
+    return;
+  }
+
+  const isVisible = activeStatusFilters.has(house.status);
+  placemark.options.set('visible', isVisible);
+}
+
+function updateAllPlacemarkVisibility() {
+  placemarkState.forEach((_, houseId) => updatePlacemarkVisibility(houseId));
+}
+
+function applyStatusStyleToPlacemark(placemark, status) {
+  if (!placemark) {
+    return;
+  }
+
+  const color = STATUS_COLORS[status] || STATUS_COLORS.yellow;
+  placemark.options.set('iconColor', color);
+}
+
+function createHousePlacemark(house) {
+  if (!mapInstance || !window.ymaps) {
+    return null;
+  }
+
+  const placemark = new ymaps.Placemark(
+    [Number(house.latitude), Number(house.longitude)],
+    {
+      hintContent: escapeHtml(house.address || '')
+    },
+    {
+      preset: 'islands#circleIcon',
+      iconColor: STATUS_COLORS[house.status] || STATUS_COLORS.yellow,
+      openBalloonOnClick: false,
+      hideIconOnBalloonOpen: false
     }
-    if (!event || !event.latLng) {
-      return;
-    }
-    const coords = [event.latLng.lat(), event.latLng.lng()];
-    handleHouseDoubleClick(coords);
+  );
+
+  placemark.events.add('click', (event) => {
+    event.preventDefault();
+    const latestHouse = houseState.get(house.id) || house;
+    openHouseBalloon(latestHouse, placemark);
   });
 
-  loadHouses();
+  placemark.balloon.events.add('close', () => {
+    if (openHouseId === house.id) {
+      openHouseId = null;
+    }
+  });
+
+  mapInstance.geoObjects.add(placemark);
+  placemarkState.set(house.id, placemark);
+  updatePlacemarkVisibility(house.id);
+  return placemark;
 }
 
 async function loadHouses() {
@@ -325,432 +352,13 @@ async function loadHouses() {
     const houses = await response.json();
     for (const house of houses) {
       houseState.set(house.id, house);
-      await createHouseOverlay(house);
+      const placemark = createHousePlacemark(house);
+      applyStatusStyleToPlacemark(placemark, house.status);
     }
+    updateAllPlacemarkVisibility();
   } catch (error) {
     console.error(error);
     showNotification(error.message, 'error');
-  }
-}
-
-
-const HOUSE_RECOGNITION_LOG_PREFIX = '[HouseRecognition]';
-
-function logHouseDebug(message, ...args) {
-  console.debug(`${HOUSE_RECOGNITION_LOG_PREFIX} ${message}`, ...args);
-}
-
-function logHouseInfo(message, ...args) {
-  console.info(`${HOUSE_RECOGNITION_LOG_PREFIX} ${message}`, ...args);
-}
-
-function logHouseWarn(message, ...args) {
-  console.warn(`${HOUSE_RECOGNITION_LOG_PREFIX} ${message}`, ...args);
-}
-
-function logHouseError(message, ...args) {
-  console.error(`${HOUSE_RECOGNITION_LOG_PREFIX} ${message}`, ...args);
-}
-
-async function ensureHouseGeometry(house) {
-  if (geometryCache.has(house.id)) {
-    const cachedGeometry = geometryCache.get(house.id);
-    logHouseDebug(
-      `Using cached geometry for house #${house.id} (${house.address}). Cached: ${Boolean(cachedGeometry)}`
-    );
-    return cachedGeometry;
-  }
-
-  logHouseDebug(
-    `Resolving geometry for house #${house.id} (${house.address}) at coordinates ${house.latitude}, ${house.longitude}`
-  );
-
-  try {
-    const result = await resolveHouseLocation([house.latitude, house.longitude], {
-      knownAddress: house.address,
-      suppressErrors: true
-    });
-    geometryCache.set(house.id, result.geometry || null);
-    logHouseInfo(
-      `Resolved geometry for house #${house.id}. Has geometry: ${Boolean(result.geometry)}. Address: ${result.address || 'unknown'}`
-    );
-    return result.geometry || null;
-  } catch (error) {
-    logHouseError(`Failed to resolve geometry for house #${house.id}`, error);
-    geometryCache.set(house.id, null);
-    return null;
-  }
-}
-
-function getPolygonRings(geometry) {
-  if (!geometry || !geometry.type || !Array.isArray(geometry.coordinates)) {
-    return [];
-  }
-
-  if (geometry.type === 'Polygon') {
-    return geometry.coordinates;
-  }
-
-  if (geometry.type === 'MultiPolygon') {
-    const rings = [];
-    for (const polygon of geometry.coordinates) {
-      if (Array.isArray(polygon)) {
-        for (const ring of polygon) {
-          if (Array.isArray(ring)) {
-            rings.push(ring);
-          }
-        }
-      }
-    }
-    return rings;
-  }
-
-  return [];
-}
-
-function normalizeRingCoordinates(ring) {
-  if (!Array.isArray(ring) || !ring.length) {
-    return [];
-  }
-  const normalized = ring
-    .map((point) => [Number(point[0]), Number(point[1])])
-    .filter((point) => !Number.isNaN(point[0]) && !Number.isNaN(point[1]));
-  if (!normalized.length) {
-    return [];
-  }
-  const first = normalized[0];
-  const last = normalized[normalized.length - 1];
-  if (first[0] !== last[0] || first[1] !== last[1]) {
-    normalized.push([...first]);
-  }
-  return normalized;
-}
-
-async function resolveHouseLocation(coords, options = {}) {
-  const { knownAddress = null, suppressErrors = false } = options;
-  if (!Array.isArray(coords) || coords.length !== 2) {
-    return { geometry: null, address: knownAddress || null };
-  }
-
-  const [lat, lng] = coords.map(Number);
-  const params = new URLSearchParams({
-    lat: lat.toFixed(7),
-    lon: lng.toFixed(7)
-  });
-
-  try {
-    const response = await fetch(`/api/buildings/resolve?${params.toString()}`);
-    if (response.status === 404) {
-      logHouseWarn('Backend did not return building geometry for the selected point.');
-      return { geometry: null, address: knownAddress || null };
-    }
-
-    if (!response.ok) {
-      throw new Error('Не удалось определить дом через сервер');
-    }
-
-    const payload = await response.json();
-    const geometry = payload?.geometry ?? null;
-    const address = payload?.address || knownAddress || null;
-
-    if (geometry) {
-      logHouseInfo('Resolved building footprint using backend detector.');
-    } else {
-      logHouseWarn('Backend response did not include geometry.');
-    }
-
-    return { geometry, address };
-  } catch (error) {
-    if (!suppressErrors) {
-      logHouseError('Failed to resolve building via backend service', error);
-    }
-    return { geometry: null, address: knownAddress || null };
-  }
-}
-
-function applyStatusStyleToOverlay(overlayRecord, status) {
-  if (
-    !overlayRecord ||
-    !Array.isArray(overlayRecord.overlays) ||
-    !window.google ||
-    !google.maps
-  ) {
-    return;
-  }
-
-  const color = STATUS_COLORS[status] || STATUS_COLORS.yellow;
-
-  if (overlayRecord.type === 'polygon') {
-    overlayRecord.overlays.forEach((polygon) => {
-      if (polygon && typeof polygon.setOptions === 'function') {
-        polygon.setOptions({
-          fillColor: color,
-          fillOpacity: 0.45,
-          strokeColor: color,
-          strokeOpacity: 0.9,
-          strokeWeight: 2
-        });
-      }
-    });
-    return;
-  }
-
-  overlayRecord.overlays.forEach((marker) => {
-    if (marker && typeof marker.setIcon === 'function') {
-      marker.setIcon({
-        path: google.maps.SymbolPath.CIRCLE,
-        fillColor: color,
-        fillOpacity: 0.9,
-        strokeColor: '#ffffff',
-        strokeOpacity: 1,
-        strokeWeight: 2,
-        scale: 8
-      });
-    }
-  });
-}
-
-function getOverlayAnchorPosition(overlayRecord, fallbackCoords = null) {
-  if (!overlayRecord) {
-    return null;
-  }
-
-  if (overlayRecord.lastAnchor) {
-    return overlayRecord.lastAnchor;
-  }
-
-  if (overlayRecord.type === 'marker' && overlayRecord.overlays.length) {
-    const marker = overlayRecord.overlays[0];
-    if (marker && typeof marker.getPosition === 'function') {
-      return marker.getPosition();
-    }
-  }
-
-  if (overlayRecord.geometry && window.google && google.maps) {
-    const centroid = computePolygonCentroid(overlayRecord.geometry);
-    if (centroid) {
-      return new google.maps.LatLng(centroid.lat, centroid.lng);
-    }
-  }
-
-  if (Array.isArray(fallbackCoords) && fallbackCoords.length === 2 && window.google && google.maps) {
-    return new google.maps.LatLng(Number(fallbackCoords[0]), Number(fallbackCoords[1]));
-  }
-
-  return mapInstance?.getCenter() ?? null;
-}
-
-function createPolygonsFromGeometry(geometry) {
-  if (!geometry || !window.google || !google.maps) {
-    return [];
-  }
-
-  const polygons = [];
-  const polygonCoordinates = geometry.type === 'MultiPolygon' ? geometry.coordinates : [geometry.coordinates];
-
-  for (const polygon of polygonCoordinates) {
-    if (!Array.isArray(polygon) || !polygon.length) {
-      continue;
-    }
-    return {
-      type: 'Polygon',
-      coordinates: [ring]
-    };
-  }
-
-    const paths = polygon
-      .map((ring) => {
-        const normalized = normalizeRingCoordinates(ring);
-        return normalized.map(([lat, lon]) => ({ lat: Number(lat), lng: Number(lon) }));
-      })
-      .filter((path) => path.length >= 3);
-
-    if (!paths.length) {
-      continue;
-    }
-
-    const polygonOverlay = new google.maps.Polygon({
-      paths,
-      map: mapInstance,
-      strokeWeight: 2,
-      strokeOpacity: 0.9,
-      fillOpacity: 0.45,
-      clickable: true
-    });
-    polygons.push(polygonOverlay);
-  }
-
-  return polygons;
-}
-
-function createMarkerForHouse(house) {
-  if (!window.google || !google.maps) {
-    return null;
-  }
-
-  return new google.maps.Marker({
-    position: { lat: Number(house.latitude), lng: Number(house.longitude) },
-    map: mapInstance,
-    title: house.address || ''
-  });
-}
-
-async function createHouseOverlay(house, providedGeometry = null) {
-  if (!mapInstance) {
-    return null;
-  }
-
-  let geometry = providedGeometry;
-  if (!geometry) {
-    geometry = await ensureHouseGeometry(house);
-  }
-
-  let overlays = [];
-  if (geometry) {
-    overlays = createPolygonsFromGeometry(geometry);
-    if (!overlays.length) {
-      geometry = null;
-    }
-  }
-
-  if (!geometry) {
-    const marker = createMarkerForHouse(house);
-    if (marker) {
-      overlays = [marker];
-    }
-  }
-
-  if (!overlays.length) {
-    return null;
-  }
-
-  const overlayRecord = {
-    type: geometry ? 'polygon' : 'marker',
-    overlays,
-    geometry: geometry || null,
-    houseId: house.id,
-    lastAnchor: null
-  };
-
-  overlayState.set(house.id, overlayRecord);
-  applyStatusStyleToOverlay(overlayRecord, house.status);
-
-  overlays.forEach((overlay) => {
-    if (overlay && typeof overlay.addListener === 'function') {
-      overlay.addListener('click', (event) => {
-        const anchor = event?.latLng || getOverlayAnchorPosition(overlayRecord, [house.latitude, house.longitude]);
-        overlayRecord.lastAnchor = anchor;
-        const latestHouse = houseState.get(house.id) || house;
-        handleOverlayOpen(latestHouse, overlayRecord, anchor);
-      });
-    }
-  });
-
-  return overlayRecord;
-}
-
-function onInfoWindowDomReady() {
-  if (!pendingInfoWindowContext) {
-    return;
-  }
-
-  const { house, overlayRecord, comments } = pendingInfoWindowContext;
-  attachBalloonEvents(house, overlayRecord, comments);
-  pendingInfoWindowContext = null;
-}
-
-async function handleOverlayOpen(house, overlayRecord, anchorPosition) {
-  if (!mapInstance || !infoWindow || !overlayRecord) {
-    return;
-  }
-
-  const latestHouse = houseState.get(house.id) || house;
-  const zoom = mapInstance.getZoom();
-  const canShowComments = typeof zoom === 'number' && zoom >= COMMENT_ZOOM_THRESHOLD;
-
-  openHouseId = latestHouse.id;
-  overlayRecord.lastAnchor = anchorPosition || getOverlayAnchorPosition(overlayRecord, [latestHouse.latitude, latestHouse.longitude]);
-
-  pendingInfoWindowContext = { house: latestHouse, overlayRecord, comments: [] };
-  infoWindow.setContent(
-    renderBalloonContent(latestHouse, [], { zoomLimited: !canShowComments, loading: canShowComments })
-  );
-  infoWindow.setPosition(overlayRecord.lastAnchor || anchorPosition);
-  infoWindow.open({ map: mapInstance });
-
-  if (!canShowComments) {
-    return;
-  }
-
-  try {
-    const comments = await loadComments(latestHouse.id);
-    pendingInfoWindowContext = { house: latestHouse, overlayRecord, comments };
-    infoWindow.setContent(renderBalloonContent(latestHouse, comments, { enableComments: true }));
-  } catch (error) {
-    showNotification(error.message, 'error');
-  }
-}
-
-function attachBalloonEvents(house, overlayRecord, comments) {
-  if (!overlayRecord) {
-    return;
-  }
-
-  const statusForm = document.getElementById(`status-form-${house.id}`);
-  if (statusForm) {
-    statusForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const formData = new FormData(statusForm);
-      const status = formData.get('status');
-
-      try {
-        const updatedHouse = await updateHouseStatus(house.id, status);
-        showNotification('Статус обновлён');
-        houseState.set(house.id, updatedHouse);
-        applyStatusStyleToOverlay(overlayRecord, updatedHouse.status);
-
-        const enableComments = mapInstance.getZoom() >= COMMENT_ZOOM_THRESHOLD;
-        const zoomLimited = !enableComments;
-        const renderedComments = enableComments ? comments : [];
-        house = updatedHouse;
-        pendingInfoWindowContext = { house: updatedHouse, overlayRecord, comments: renderedComments };
-        infoWindow.setContent(
-          renderBalloonContent(updatedHouse, renderedComments, {
-            enableComments,
-            zoomLimited
-          })
-        );
-      } catch (error) {
-        showNotification(error.message, 'error');
-      }
-    });
-  }
-
-  const commentForm = document.getElementById(`comment-form-${house.id}`);
-  if (commentForm) {
-    commentForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const formData = new FormData(commentForm);
-      const payload = {
-        house_id: house.id,
-        text: formData.get('text'),
-        author: formData.get('author') || null
-      };
-
-      try {
-        const newComment = await submitComment(payload);
-        const updatedComments = [newComment, ...(commentsCache.get(house.id) || [])];
-        commentsCache.set(house.id, updatedComments);
-        comments = updatedComments;
-        pendingInfoWindowContext = { house, overlayRecord, comments: updatedComments };
-        infoWindow.setContent(
-          renderBalloonContent(house, updatedComments, { enableComments: true })
-        );
-        showNotification('Комментарий добавлен');
-      } catch (error) {
-        showNotification(error.message, 'error');
-      }
-    });
   }
 }
 
@@ -760,19 +368,18 @@ function renderBalloonContent(house, comments = [], options = {}) {
     if (loading) {
       return '<p>Загрузка комментариев...</p>';
     }
-    if (zoomLimited) {
-      return '<p>Для просмотра комментариев приблизьте карту до уровня 15 и выше.</p>';
-    }
+
     if (!comments.length) {
-      return '<p>Комментариев пока нет. Добавьте первый!</p>';
+      return '<p>Пока нет комментариев. Станьте первым!</p>';
     }
+
     return `
       <div class="comments-list">
         ${comments
           .map(
             (comment) => `
               <div class="comment-item">
-                ${comment.author ? `<strong>${escapeHtml(comment.author)}</strong>` : ''}
+                <strong>${escapeHtml(comment.author || 'Аноним')}</strong>
                 <div class="comment-meta">${new Date(comment.created_at).toLocaleString('ru-RU')}</div>
                 <div class="comment-text">${escapeHtml(comment.text)}</div>
               </div>
@@ -795,7 +402,7 @@ function renderBalloonContent(house, comments = [], options = {}) {
 
   return `
     <div class="balloon" data-house-id="${house.id}">
-      <h3>${escapeHtml(house.address)}</h3>
+      <h3>${escapeHtml(house.address || 'Без адреса')}</h3>
       <form id="status-form-${house.id}" class="status-select">
         <label for="status-select-input-${house.id}">Статус</label>
         <select id="status-select-input-${house.id}" name="status">
@@ -810,11 +417,144 @@ function renderBalloonContent(house, comments = [], options = {}) {
         ${commentsBlock}
         ${enableComments ? commentForm : ''}
         ${!enableComments ? '<p class="comment-hint">Чтобы оставлять комментарии, приблизьте карту.</p>' : ''}
+        ${zoomLimited && !enableComments ? '<p class="comment-hint">Комментарии доступны при увеличении карты.</p>' : ''}
       </section>
     </div>
   `;
 }
 
+function attachBalloonEvents(house, placemark, comments) {
+  if (!placemark) {
+    return;
+  }
+
+  const statusForm = document.getElementById(`status-form-${house.id}`);
+  if (statusForm) {
+    statusForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const formData = new FormData(statusForm);
+      const status = formData.get('status');
+
+      try {
+        const updatedHouse = await updateHouseStatus(house.id, status);
+        showNotification('Статус обновлён');
+        const placemarkRef = placemarkState.get(house.id);
+        if (placemarkRef) {
+          applyStatusStyleToPlacemark(placemarkRef, updatedHouse.status);
+          updatePlacemarkVisibility(house.id);
+        }
+
+        const enableComments = mapInstance.getZoom() >= COMMENT_ZOOM_THRESHOLD;
+        const zoomLimited = !enableComments;
+        const renderedComments = enableComments ? comments : [];
+        placemark.properties.set(
+          'balloonContent',
+          renderBalloonContent(updatedHouse, renderedComments, {
+            enableComments,
+            zoomLimited
+          })
+        );
+        setTimeout(() => {
+          attachBalloonEvents(updatedHouse, placemark, renderedComments);
+        }, 0);
+      } catch (error) {
+        showNotification(error.message, 'error');
+      }
+    });
+  }
+
+  const commentForm = document.getElementById(`comment-form-${house.id}`);
+  if (commentForm) {
+    commentForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const formData = new FormData(commentForm);
+      const payload = {
+        house_id: house.id,
+        text: formData.get('text'),
+        author: formData.get('author') || null
+      };
+
+      try {
+        const newComment = await submitComment(payload);
+        const updatedComments = [newComment, ...(commentsCache.get(house.id) || [])];
+        commentsCache.set(house.id, updatedComments);
+        placemark.properties.set(
+          'balloonContent',
+          renderBalloonContent(house, updatedComments, { enableComments: true })
+        );
+        setTimeout(() => {
+          attachBalloonEvents(house, placemark, updatedComments);
+        }, 0);
+        showNotification('Комментарий добавлен');
+      } catch (error) {
+        showNotification(error.message, 'error');
+      }
+    });
+  }
+}
+
+async function resolveHouseAddress(coords) {
+  if (!window.ymaps || typeof window.ymaps.geocode !== 'function') {
+    return null;
+  }
+
+  try {
+    const geocodeResult = await ymaps.geocode(coords, { kind: 'house', results: 1 });
+    const firstGeoObject = geocodeResult.geoObjects.get(0);
+    if (!firstGeoObject) {
+      return null;
+    }
+    return firstGeoObject.getAddressLine();
+  } catch (error) {
+    console.error('Failed to resolve address via Yandex Maps', error);
+    return null;
+  }
+}
+
+async function openHouseBalloon(house, placemark) {
+  if (!mapInstance || !placemark) {
+    return;
+  }
+
+  const latestHouse = houseState.get(house.id) || house;
+  const zoom = mapInstance.getZoom();
+  const canShowComments = typeof zoom === 'number' && zoom >= COMMENT_ZOOM_THRESHOLD;
+
+  openHouseId = latestHouse.id;
+
+  placemark.properties.set(
+    'balloonContent',
+    renderBalloonContent(latestHouse, [], {
+      zoomLimited: !canShowComments,
+      loading: canShowComments,
+      enableComments: canShowComments
+    })
+  );
+  placemark.balloon.open();
+
+  setTimeout(() => {
+    attachBalloonEvents(latestHouse, placemark, []);
+  }, 0);
+
+  if (!canShowComments) {
+    return;
+  }
+
+  try {
+    const comments = await loadComments(latestHouse.id);
+    const refreshedHouse = houseState.get(latestHouse.id) || latestHouse;
+    placemark.properties.set(
+      'balloonContent',
+      renderBalloonContent(refreshedHouse, comments, { enableComments: true })
+    );
+    setTimeout(() => {
+      attachBalloonEvents(refreshedHouse, placemark, comments);
+    }, 0);
+  } catch (error) {
+    console.error(error);
+    showNotification(error.message || 'Не удалось загрузить комментарии', 'error');
+  }
+}
 
 async function handleHouseDoubleClick(coords) {
   if (!mapInstance || !Array.isArray(coords)) {
@@ -822,18 +562,8 @@ async function handleHouseDoubleClick(coords) {
   }
 
   try {
-    const { geometry, address } = await resolveHouseLocation(coords);
-
-    if (!geometry) {
-      showNotification('Контур дома не найден. Попробуйте выбрать другой дом.', 'error');
-      return;
-    }
-
-    openCreateModal({
-      address: address || 'Адрес не найден',
-      coords,
-      geometry
-    });
+    const address = (await resolveHouseAddress(coords)) || 'Адрес не найден';
+    openCreateModal({ address, coords });
   } catch (error) {
     console.error(error);
     showNotification('Не удалось определить дом. Попробуйте ещё раз.', 'error');
@@ -868,6 +598,10 @@ async function updateHouseStatus(houseId, status) {
 
   const updatedHouse = await response.json();
   houseState.set(houseId, updatedHouse);
+  const placemark = placemarkState.get(houseId);
+  if (placemark) {
+    applyStatusStyleToPlacemark(placemark, updatedHouse.status);
+  }
   return updatedHouse;
 }
 
@@ -887,15 +621,66 @@ async function submitComment(payload) {
   return await response.json();
 }
 
+async function initMap() {
+  const mapElement = document.getElementById('map');
+  if (!mapElement) {
+    showNotification('Элемент карты не найден на странице', 'error');
+    return;
+  }
+
+  mapInstance = new ymaps.Map(
+    mapElement,
+    {
+      center: [61.524, 105.3188],
+      zoom: 4,
+      controls: ['zoomControl', 'typeSelector', 'fullscreenControl']
+    },
+    {
+      suppressMapOpenBlock: true
+    }
+  );
+
+  mapInstance.options.set('doubleClickZoom', false);
+
+  mapInstance.events.add('boundschange', (event) => {
+    const newZoom = event.get('newZoom');
+    const oldZoom = event.get('oldZoom');
+    if (typeof newZoom !== 'number' || typeof oldZoom !== 'number' || newZoom === oldZoom) {
+      return;
+    }
+
+    if (openHouseId !== null) {
+      const crossedThreshold =
+        (oldZoom < COMMENT_ZOOM_THRESHOLD && newZoom >= COMMENT_ZOOM_THRESHOLD) ||
+        (oldZoom >= COMMENT_ZOOM_THRESHOLD && newZoom < COMMENT_ZOOM_THRESHOLD);
+
+      if (crossedThreshold) {
+        const house = houseState.get(openHouseId);
+        const placemark = placemarkState.get(openHouseId);
+        if (house && placemark) {
+          openHouseBalloon(house, placemark);
+        }
+      }
+    }
+  });
+
+  mapInstance.events.add('dblclick', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const coords = event.get('coords');
+    handleHouseDoubleClick(coords);
+  });
+
+  loadHouses();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   ensureCreationModalElements();
-  setTimeout(() => {
-    if (!window.google || !window.google.maps) {
-      showNotification('Скрипт Google Maps не загрузился', 'error');
-    }
-  }, 5000);
-});
+  initStatusFilters();
 
-if (typeof window !== 'undefined') {
-  window.initMap = initMap;
-}
+  waitForYandexMaps()
+    .then(() => ymaps.ready(initMap))
+    .catch(() => {
+      showNotification('Скрипт Яндекс.Карт не загрузился', 'error');
+    });
+});
