@@ -311,10 +311,38 @@ async function loadHouses() {
   }
 }
 
+const HOUSE_RECOGNITION_LOG_PREFIX = '[HouseRecognition]';
+
+function logHouseDebug(message, ...args) {
+  console.debug(`${HOUSE_RECOGNITION_LOG_PREFIX} ${message}`, ...args);
+}
+
+function logHouseInfo(message, ...args) {
+  console.info(`${HOUSE_RECOGNITION_LOG_PREFIX} ${message}`, ...args);
+}
+
+function logHouseWarn(message, ...args) {
+  console.warn(`${HOUSE_RECOGNITION_LOG_PREFIX} ${message}`, ...args);
+}
+
+function logHouseError(message, ...args) {
+  console.error(`${HOUSE_RECOGNITION_LOG_PREFIX} ${message}`, ...args);
+}
+
 async function ensureHouseGeometry(house) {
   if (geometryCache.has(house.id)) {
-    return geometryCache.get(house.id);
+    const cachedGeometry = geometryCache.get(house.id);
+    const hasGeometry = Boolean(cachedGeometry);
+    logHouseDebug(
+      `Using cached geometry for house #${house.id} (${house.address}). Cached: ${hasGeometry}`
+    );
+    return cachedGeometry;
   }
+
+  const coordinateInfo = `${house.latitude}, ${house.longitude}`;
+  logHouseDebug(
+    `Resolving geometry for house #${house.id} (${house.address}) at coordinates ${coordinateInfo}`
+  );
 
   try {
     const result = await resolveHouseLocation([house.latitude, house.longitude], {
@@ -322,9 +350,13 @@ async function ensureHouseGeometry(house) {
       suppressErrors: true
     });
     geometryCache.set(house.id, result.geometry || null);
+    const resolvedAddress = result.address || 'unknown';
+    logHouseInfo(
+      `Resolved geometry for house #${house.id}. Has geometry: ${Boolean(result.geometry)}. Address: ${resolvedAddress}`
+    );
     return result.geometry || null;
   } catch (error) {
-    console.error(error);
+    logHouseError(`Failed to resolve geometry for house #${house.id}`, error);
     geometryCache.set(house.id, null);
     return null;
   }
@@ -360,11 +392,15 @@ async function resolveHouseLocation(coords, options = {}) {
 
   let primaryGeoObjects;
   try {
+    logHouseDebug(
+      `Geocoding by coordinates ${coords.join(', ')} with known address: ${knownAddress || 'none'}`
+    );
     const geocode = await ymaps.geocode(coords, searchOptions);
     primaryGeoObjects = collectGeoObjects(geocode.geoObjects);
+    logHouseDebug(`Received ${primaryGeoObjects.length} primary geocode candidates`);
   } catch (error) {
     if (!suppressErrors) {
-      console.error(error);
+      logHouseError('Error during coordinate geocoding', error);
     }
     primaryGeoObjects = [];
   }
@@ -374,13 +410,22 @@ async function resolveHouseLocation(coords, options = {}) {
   let resolvedGeometry = bestCandidate.geometry;
   let resolvedAddress = resolvedGeoObject?.getAddressLine() || knownAddress || null;
 
+  if (resolvedGeoObject) {
+    const candidateAddress = resolvedGeoObject.getAddressLine() || 'unknown';
+    logHouseDebug(`Selected candidate address: ${candidateAddress}. Polygon detected: ${Boolean(resolvedGeometry)}`);
+  } else {
+    logHouseWarn('No suitable geoObject candidates found by coordinates');
+  }
+
   if (!resolvedGeometry && resolvedAddress) {
+    logHouseDebug(`Attempting address-based geocoding for ${resolvedAddress}`);
     try {
       const addressGeocode = await ymaps.geocode(resolvedAddress, {
         kind: 'house',
         results: 10
       });
       const addressCandidates = collectGeoObjects(addressGeocode.geoObjects);
+      logHouseDebug(`Received ${addressCandidates.length} candidates from address geocoding`);
       const byAddress = findGeoObjectWithPolygon(addressCandidates);
       if (byAddress.geometry) {
         resolvedGeometry = byAddress.geometry;
@@ -389,10 +434,11 @@ async function resolveHouseLocation(coords, options = {}) {
         }
         resolvedAddress =
           byAddress.geoObject?.getAddressLine() || resolvedAddress || knownAddress || null;
+        logHouseInfo(`Resolved polygon geometry via address geocoding for ${resolvedAddress}`);
       }
     } catch (error) {
       if (!suppressErrors) {
-        console.error(error);
+        logHouseError(`Error during address geocoding for ${resolvedAddress}`, error);
       }
     }
   }
@@ -459,6 +505,7 @@ async function createHouseGeoObject(house, providedGeometry = null) {
 
   let geometry = providedGeometry;
   if (!geometry) {
+    logHouseDebug(`No geometry provided for house #${house.id}, fetching via geocoding`);
     geometry = await ensureHouseGeometry(house);
   }
 
@@ -466,6 +513,7 @@ async function createHouseGeoObject(house, providedGeometry = null) {
 
   try {
     if (geometry) {
+      logHouseDebug(`Creating polygon geo object for house #${house.id} with ${geometry.type} geometry`);
       geometryCache.set(house.id, geometry);
       geoObject = new ymaps.GeoObject(
         {
@@ -488,6 +536,7 @@ async function createHouseGeoObject(house, providedGeometry = null) {
         }
       );
     } else {
+      logHouseDebug(`Falling back to point placemark for house #${house.id}`);
       geoObject = new ymaps.Placemark(
         [house.latitude, house.longitude],
         properties,
@@ -498,7 +547,7 @@ async function createHouseGeoObject(house, providedGeometry = null) {
       );
     }
   } catch (error) {
-    console.error(error);
+    logHouseError(`Failed to create geo object for house #${house.id}`, error);
     return null;
   }
 
