@@ -6,8 +6,7 @@
     <title>FlatDrawer</title>
     <link rel="stylesheet" href="/static/styles.css" />
     <script
-      src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&callback=initMap&v=weekly"
-      async
+      src="https://api-maps.yandex.ru/2.1/?lang=ru_RU{% if yandex_maps_api_key %}&apikey={{ yandex_maps_api_key }}{% endif %}"
       defer
     ></script>
   </head>
@@ -27,16 +26,31 @@
           <li><span class="legend-dot legend-yellow"></span> Спорные объекты</li>
           <li><span class="legend-dot legend-green"></span> Перспективные дома</li>
         </ul>
+        <div class="status-filters" role="group" aria-label="Фильтр по статусам домов">
+          <h3>Фильтр по статусу</h3>
+          <label>
+            <input type="checkbox" value="red" data-status-filter checked />
+            <span><span class="legend-dot legend-red"></span> Неинтересные</span>
+          </label>
+          <label>
+            <input type="checkbox" value="yellow" data-status-filter checked />
+            <span><span class="legend-dot legend-yellow"></span> Спорные</span>
+          </label>
+          <label>
+            <input type="checkbox" value="green" data-status-filter checked />
+            <span><span class="legend-dot legend-green"></span> Интересные</span>
+          </label>
+        </div>
         <div class="instructions">
           <h3>Как работать с картой</h3>
           <ol>
-            <li>Дважды кликните по дому на карте, чтобы создать новую карточку.</li>
+            <li>Дважды кликните по точке на карте, чтобы создать карточку дома.</li>
             <li>Выберите статус и при необходимости добавьте комментарий в появившемся окне.</li>
-            <li>Нажмите на дом, чтобы изменить статус или оставить дополнительные комментарии.</li>
-            <li>Комментарии доступны при приближении к дому (зум &ge; 15).</li>
+            <li>Нажмите на метку дома, чтобы изменить статус или оставить дополнительные комментарии.</li>
+            <li>Комментарии доступны при приближении к метке (зум &ge; 15).</li>
           </ol>
         </div>
-        <p class="info-panel__hint">Каждый дом на карте подсвечивается целиком согласно его статусу.</p>
+        <p class="info-panel__hint">Каждый дом отмечается цветной точкой. Используйте фильтр, чтобы сосредоточиться на нужных статусах.</p>
       </aside>
     </main>
     <div id="notifications" class="notifications"></div>

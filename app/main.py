@@ -85,13 +85,12 @@ def preload_houses_cache(db: Session) -> None:
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
-    google_maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY", "")
-    logger.debug("Rendering index page. API key present: %s", bool(google_maps_api_key))
+    yandex_maps_api_key = os.getenv("YANDEX_MAPS_API_KEY", "")
+    logger.debug("Rendering index page. API key present: %s", bool(yandex_maps_api_key))
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
-            "google_maps_api_key": google_maps_api_key,
-            "has_api_key": bool(google_maps_api_key),
+            "yandex_maps_api_key": yandex_maps_api_key,
         },
     )
