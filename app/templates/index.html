@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FlatDrawer</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    {% if has_api_key %}
+      <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU&apikey={{ yandex_maps_api_key }}" type="text/javascript"></script>
+    {% else %}
+      <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU" type="text/javascript"></script>
+    {% endif %}
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>FlatDrawer</h1>
+      <p class="app-subtitle">Помечайте интересные дома для флиппинга прямо на карте России</p>
+    </header>
+    <main class="app-container">
+      <section class="map-wrapper">
+        <div id="map"></div>
+      </section>
+      <aside class="info-panel">
+        <h2>Легенда</h2>
+        <ul class="legend">
+          <li><span class="legend-dot legend-red"></span> Неинтересные дома</li>
+          <li><span class="legend-dot legend-yellow"></span> Спорные объекты</li>
+          <li><span class="legend-dot legend-green"></span> Перспективные дома</li>
+        </ul>
+        <div class="instructions">
+          <h3>Инструкции</h3>
+          <ol>
+            <li>Нажмите «Выбрать на карте» и укажите дом для создания новой карточки.</li>
+            <li>Заполните адрес (он подставится автоматически) и сохраните карточку.</li>
+            <li>Выберите дом на карте, чтобы открыть и обновить статус.</li>
+            <li>Комментарии отображаются при приближении к дому (зум &ge; 15).</li>
+          </ol>
+        </div>
+        <section class="create-house">
+          <h3>Новая карточка</h3>
+          <p class="create-house__hint">
+            Нажмите &laquo;Выбрать на карте&raquo;, а затем укажите дом. Адрес заполнится автоматически,
+            при необходимости его можно отредактировать.
+          </p>
+          <form id="create-house-form" class="create-house__form">
+            <div class="form-field">
+              <label for="create-house-address">Адрес</label>
+              <input
+                id="create-house-address"
+                name="address"
+                type="text"
+                placeholder="Выберите точку на карте"
+                required
+                maxlength="255"
+              />
+            </div>
+            <div class="form-field create-house__coordinates">
+              <div>
+                <label for="create-house-latitude">Широта</label>
+                <input id="create-house-latitude" name="latitude" type="number" step="0.000001" required />
+              </div>
+              <div>
+                <label for="create-house-longitude">Долгота</label>
+                <input id="create-house-longitude" name="longitude" type="number" step="0.000001" required />
+              </div>
+            </div>
+            <div class="form-field">
+              <label for="create-house-status">Статус</label>
+              <select id="create-house-status" name="status">
+                <option value="red">Неинтересный</option>
+                <option value="yellow" selected>Спорный</option>
+                <option value="green">Интересный</option>
+              </select>
+            </div>
+            <div class="create-house__actions">
+              <button type="button" id="pick-house-location">Выбрать на карте</button>
+              <button type="button" id="cancel-pick-house" class="secondary" hidden>Отменить</button>
+              <button type="submit" class="primary">Создать карточку</button>
+            </div>
+          </form>
+        </section>
+      </aside>
+    </main>
+    <div id="notifications" class="notifications"></div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

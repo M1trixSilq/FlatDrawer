@@ -1,0 +1,37 @@
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+
+from app import models, schemas
+from app.cache import houses_cache
+from app.database import get_db
+
+router = APIRouter(prefix="/api/comments", tags=["comments"])
+
+
+@router.get("/", response_model=List[schemas.CommentRead])
+def read_comments(
+    house_id: Optional[int] = Query(default=None, description="Filter comments by house"),
+    db: Session = Depends(get_db),
+) -> List[schemas.CommentRead]:
+    query = db.query(models.Comment)
+    if house_id is not None:
+        query = query.filter(models.Comment.house_id == house_id)
+    query = query.order_by(models.Comment.created_at.desc())
+    comments = query.all()
+    return [schemas.CommentRead.from_orm(comment) for comment in comments]
+
+
+@router.post("/", response_model=schemas.CommentRead, status_code=status.HTTP_201_CREATED)
+def create_comment(comment_in: schemas.CommentCreate, db: Session = Depends(get_db)) -> schemas.CommentRead:
+    house = db.query(models.House).filter(models.House.id == comment_in.house_id).first()
+    if not house:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="House not found")
+
+    comment = models.Comment(**comment_in.dict())
+    db.add(comment)
+    db.commit()
+    db.refresh(comment)
+    houses_cache.clear()
+    return schemas.CommentRead.from_orm(comment)
