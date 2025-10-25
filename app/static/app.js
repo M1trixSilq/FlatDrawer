@@ -8,7 +8,6 @@ const COMMENT_ZOOM_THRESHOLD = 15;
 
 let mapInstance;
 let infoWindow = null;
-let geocoderInstance = null;
 let lastZoomLevel = 4;
 let openHouseId = null;
 let pendingInfoWindowContext = null;
@@ -270,8 +269,6 @@ function initMap() {
   });
 
   infoWindow = new google.maps.InfoWindow();
-  geocoderInstance = new google.maps.Geocoder();
-
   infoWindow.addListener('closeclick', () => {
     openHouseId = null;
     pendingInfoWindowContext = null;
@@ -411,193 +408,6 @@ function getPolygonRings(geometry) {
   return [];
 }
 
-function isPointOnSegment(point, start, end, tolerance = 1e-9) {
-  if (!Array.isArray(point) || !Array.isArray(start) || !Array.isArray(end)) {
-    return false;
-  }
-
-  const [px, py] = point.map(Number);
-  const [sx, sy] = start.map(Number);
-  const [ex, ey] = end.map(Number);
-
-  if (
-    Number.isNaN(px) ||
-    Number.isNaN(py) ||
-    Number.isNaN(sx) ||
-    Number.isNaN(sy) ||
-    Number.isNaN(ex) ||
-    Number.isNaN(ey)
-  ) {
-    return false;
-  }
-
-  const cross = (ex - sx) * (py - sy) - (ey - sy) * (px - sx);
-  if (Math.abs(cross) > tolerance) {
-    return false;
-  }
-
-  const dot = (px - sx) * (ex - sx) + (py - sy) * (ey - sy);
-  const squaredLength = (ex - sx) * (ex - sx) + (ey - sy) * (ey - sy);
-  if (dot < -tolerance || dot - squaredLength > tolerance) {
-    return false;
-  }
-
-  return true;
-}
-
-function isPointInRing(ring, point) {
-  if (!Array.isArray(ring) || ring.length < 3 || !Array.isArray(point)) {
-    return false;
-  }
-
-  const targetLat = Number(point[0]);
-  const targetLon = Number(point[1]);
-  if (Number.isNaN(targetLat) || Number.isNaN(targetLon)) {
-    return false;
-  }
-
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
-    const current = ring[i];
-    const previous = ring[j];
-    if (!current || !previous) {
-      continue;
-    }
-
-    const currentLat = Number(current[0]);
-    const currentLon = Number(current[1]);
-    const previousLat = Number(previous[0]);
-    const previousLon = Number(previous[1]);
-
-    if (
-      Number.isNaN(currentLat) ||
-      Number.isNaN(currentLon) ||
-      Number.isNaN(previousLat) ||
-      Number.isNaN(previousLon)
-    ) {
-      continue;
-    }
-
-    if (isPointOnSegment(point, current, previous)) {
-      return true;
-    }
-
-    const intersects =
-      currentLat > targetLat !== previousLat > targetLat &&
-      targetLon <
-        ((previousLon - currentLon) * (targetLat - currentLat)) /
-          (previousLat - currentLat || Number.EPSILON) +
-          currentLon;
-
-    if (intersects) {
-      inside = !inside;
-    }
-  }
-
-  return inside;
-}
-
-function geometryContainsCoordinates(geometry, point) {
-  if (!geometry || !geometry.type || !Array.isArray(geometry.coordinates)) {
-    return false;
-  }
-
-  const polygonContainsPoint = (polygonRings) => {
-    if (!Array.isArray(polygonRings) || polygonRings.length === 0) {
-      return false;
-    }
-
-    const [outerRing, ...holes] = polygonRings;
-    if (!Array.isArray(outerRing)) {
-      return false;
-    }
-
-    if (!isPointInRing(outerRing, point)) {
-      return false;
-    }
-
-    for (const hole of holes) {
-      if (isPointInRing(hole, point)) {
-        return false;
-      }
-    }
-
-    return true;
-  };
-
-  if (geometry.type === 'Polygon') {
-    return polygonContainsPoint(geometry.coordinates);
-  }
-
-  if (geometry.type === 'MultiPolygon') {
-    for (const polygon of geometry.coordinates) {
-      if (polygonContainsPoint(polygon)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-function computePolygonCentroid(geometry) {
-  const rings = getPolygonRings(geometry);
-  if (!rings.length) {
-    return null;
-  }
-
-  const ring = rings[0];
-  if (!Array.isArray(ring) || ring.length === 0) {
-    return null;
-  }
-
-  let area = 0;
-  let centroidLat = 0;
-  let centroidLon = 0;
-
-  for (let i = 0; i < ring.length - 1; i += 1) {
-    const current = ring[i];
-    const next = ring[i + 1];
-    if (!current || !next) {
-      continue;
-    }
-
-    const x0 = Number(current[1]);
-    const y0 = Number(current[0]);
-    const x1 = Number(next[1]);
-    const y1 = Number(next[0]);
-
-    if ([x0, y0, x1, y1].some((value) => Number.isNaN(value))) {
-      continue;
-    }
-
-    const factor = x0 * y1 - x1 * y0;
-    area += factor;
-    centroidLon += (x0 + x1) * factor;
-    centroidLat += (y0 + y1) * factor;
-  }
-
-  if (area === 0) {
-    const validPoints = ring.filter(
-      (value) =>
-        Array.isArray(value) &&
-        !Number.isNaN(Number(value[0])) &&
-        !Number.isNaN(Number(value[1]))
-    );
-    if (!validPoints.length) {
-      return null;
-    }
-    const avgLat = validPoints.reduce((sum, value) => sum + Number(value[0]), 0) / validPoints.length;
-    const avgLon = validPoints.reduce((sum, value) => sum + Number(value[1]), 0) / validPoints.length;
-    return { lat: avgLat, lng: avgLon };
-  }
-
-  const signedArea = area / 2;
-  const cx = centroidLon / (6 * signedArea);
-  const cy = centroidLat / (6 * signedArea);
-  return { lat: cy, lng: cx };
-}
-
 function normalizeRingCoordinates(ring) {
   if (!Array.isArray(ring) || !ring.length) {
     return [];
@@ -616,87 +426,6 @@ function normalizeRingCoordinates(ring) {
   return normalized;
 }
 
-function convertOverpassElementToGeometry(element) {
-  if (!element || !element.type) {
-    return null;
-  }
-
-  if (element.type === 'way' && Array.isArray(element.geometry)) {
-    const ring = normalizeRingCoordinates(element.geometry.map((point) => [point.lat, point.lon]));
-    if (ring.length < 4) {
-      return null;
-    }
-    return {
-      type: 'Polygon',
-      coordinates: [ring]
-    };
-  }
-
-  if (element.type === 'relation' && Array.isArray(element.members)) {
-    const polygons = [];
-    for (const member of element.members) {
-      if (member.role === 'outer' && Array.isArray(member.geometry)) {
-        const outerRing = normalizeRingCoordinates(
-          member.geometry.map((point) => [point.lat, point.lon])
-        );
-        if (outerRing.length >= 4) {
-          polygons.push([outerRing]);
-        }
-      }
-    }
-
-    if (!polygons.length) {
-      return null;
-    }
-
-    if (polygons.length === 1) {
-      return {
-        type: 'Polygon',
-        coordinates: polygons[0]
-      };
-    }
-
-    return {
-      type: 'MultiPolygon',
-      coordinates: polygons
-    };
-  }
-
-  return null;
-}
-
-async function fetchBuildingGeometries(lat, lng) {
-  const query = `
-    [out:json][timeout:25];
-    (
-      way["building"](around:30,${lat},${lng});
-      relation["building"](around:30,${lat},${lng});
-    );
-    out geom;
-  `;
-
-  const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error('Не удалось получить контуры здания');
-  }
-
-  const data = await response.json();
-  if (!data || !Array.isArray(data.elements)) {
-    return [];
-  }
-
-  const geometries = [];
-  for (const element of data.elements) {
-    const geometry = convertOverpassElementToGeometry(element);
-    if (geometry) {
-      geometries.push(geometry);
-    }
-  }
-
-  return geometries;
-}
-
 async function resolveHouseLocation(coords, options = {}) {
   const { knownAddress = null, suppressErrors = false } = options;
   if (!Array.isArray(coords) || coords.length !== 2) {
@@ -704,53 +433,39 @@ async function resolveHouseLocation(coords, options = {}) {
   }
 
   const [lat, lng] = coords.map(Number);
-  let resolvedAddress = knownAddress || null;
+  const params = new URLSearchParams({
+    lat: lat.toFixed(7),
+    lon: lng.toFixed(7)
+  });
 
-  if (!resolvedAddress && geocoderInstance) {
-    try {
-      const geocodeResults = await geocoderInstance.geocode({ location: { lat, lng } });
-      if (Array.isArray(geocodeResults?.results) && geocodeResults.results.length > 0) {
-        resolvedAddress = geocodeResults.results[0].formatted_address;
-      }
-    } catch (error) {
-      if (!suppressErrors) {
-        logHouseError('Error during reverse geocoding via Google Maps', error);
-      }
-    }
-  }
-
-  let geometries = [];
   try {
-    geometries = await fetchBuildingGeometries(lat, lng);
-    logHouseDebug(`Fetched ${geometries.length} building geometries from Overpass API.`);
+    const response = await fetch(`/api/buildings/resolve?${params.toString()}`);
+    if (response.status === 404) {
+      logHouseWarn('Backend did not return building geometry for the selected point.');
+      return { geometry: null, address: knownAddress || null };
+    }
+
+    if (!response.ok) {
+      throw new Error('Не удалось определить дом через сервер');
+    }
+
+    const payload = await response.json();
+    const geometry = payload?.geometry ?? null;
+    const address = payload?.address || knownAddress || null;
+
+    if (geometry) {
+      logHouseInfo('Resolved building footprint using backend detector.');
+    } else {
+      logHouseWarn('Backend response did not include geometry.');
+    }
+
+    return { geometry, address };
   } catch (error) {
     if (!suppressErrors) {
-      logHouseError('Failed to fetch building geometries from Overpass API', error);
+      logHouseError('Failed to resolve building via backend service', error);
     }
+    return { geometry: null, address: knownAddress || null };
   }
-
-  let resolvedGeometry = null;
-  for (const geometry of geometries) {
-    if (geometryContainsCoordinates(geometry, [lat, lng])) {
-      resolvedGeometry = geometry;
-      break;
-    }
-  }
-
-  if (!resolvedGeometry && geometries.length) {
-    resolvedGeometry = geometries[0];
-  }
-
-  if (resolvedGeometry) {
-    logHouseInfo('Resolved building footprint using Overpass data.');
-  } else {
-    logHouseWarn('Failed to resolve a building footprint that matches the selected point.');
-  }
-
-  return {
-    geometry: resolvedGeometry,
-    address: resolvedAddress
-  };
 }
 
 function applyStatusStyleToOverlay(overlayRecord, status) {
@@ -837,6 +552,11 @@ function createPolygonsFromGeometry(geometry) {
     if (!Array.isArray(polygon) || !polygon.length) {
       continue;
     }
+    return {
+      type: 'Polygon',
+      coordinates: [ring]
+    };
+  }
 
     const paths = polygon
       .map((ring) => {

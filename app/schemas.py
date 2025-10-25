@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field, validator
 
@@ -74,3 +74,13 @@ class HouseRead(HouseBase):
 
     class Config:
         orm_mode = True
+
+
+class BuildingGeometry(BaseModel):
+    type: str = Field(..., regex=r"^(Polygon|MultiPolygon)$")
+    coordinates: Any
+
+
+class BuildingRecognitionResponse(BaseModel):
+    geometry: Optional[BuildingGeometry]
+    address: Optional[str]

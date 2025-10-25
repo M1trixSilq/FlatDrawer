@@ -21,7 +21,7 @@ from app import schemas
 from app.cache import houses_cache
 from app.database import SessionLocal, init_db
 from app.models import House
-from app.routers import comments, houses
+from app.routers import buildings, comments, houses
 
 
 def configure_logging() -> None:
@@ -54,6 +54,7 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 app.include_router(houses.router)
 app.include_router(comments.router)
+app.include_router(buildings.router)
 
 
 @app.on_event("startup")
