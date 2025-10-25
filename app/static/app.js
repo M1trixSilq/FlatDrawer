@@ -373,14 +373,264 @@ function collectGeoObjects(geoObjectsCollection) {
   return items;
 }
 
-function findGeoObjectWithPolygon(candidates) {
-  for (const candidate of candidates) {
-    const geometry = extractPolygonGeometry(candidate);
-    if (geometry) {
-      return { geoObject: candidate, geometry };
+function getPolygonRings(geometry) {
+  if (!geometry || !geometry.type || !Array.isArray(geometry.coordinates)) {
+    return [];
+  }
+
+  if (geometry.type === 'Polygon') {
+    return geometry.coordinates;
+  }
+
+  if (geometry.type === 'MultiPolygon') {
+    const rings = [];
+    for (const polygon of geometry.coordinates) {
+      if (Array.isArray(polygon)) {
+        for (const ring of polygon) {
+          if (Array.isArray(ring)) {
+            rings.push(ring);
+          }
+        }
+      }
+    }
+    return rings;
+  }
+
+  return [];
+}
+
+function isPointOnSegment(point, start, end, tolerance = 1e-9) {
+  if (!Array.isArray(point) || !Array.isArray(start) || !Array.isArray(end)) {
+    return false;
+  }
+
+  const [px, py] = point.map(Number);
+  const [sx, sy] = start.map(Number);
+  const [ex, ey] = end.map(Number);
+
+  if (
+    Number.isNaN(px) ||
+    Number.isNaN(py) ||
+    Number.isNaN(sx) ||
+    Number.isNaN(sy) ||
+    Number.isNaN(ex) ||
+    Number.isNaN(ey)
+  ) {
+    return false;
+  }
+
+  const cross = (ex - sx) * (py - sy) - (ey - sy) * (px - sx);
+  if (Math.abs(cross) > tolerance) {
+    return false;
+  }
+
+  const dot = (px - sx) * (ex - sx) + (py - sy) * (ey - sy);
+  if (dot < -tolerance) {
+    return false;
+  }
+
+  const squaredLength = (ex - sx) * (ex - sx) + (ey - sy) * (ey - sy);
+  if (dot - squaredLength > tolerance) {
+    return false;
+  }
+
+  return true;
+}
+
+function isPointInRing(ring, point) {
+  if (!Array.isArray(ring) || ring.length < 3 || !Array.isArray(point)) {
+    return false;
+  }
+
+  const targetLat = Number(point[0]);
+  const targetLon = Number(point[1]);
+  if (Number.isNaN(targetLat) || Number.isNaN(targetLon)) {
+    return false;
+  }
+
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+    const current = ring[i];
+    const previous = ring[j];
+    if (!current || !previous) {
+      continue;
+    }
+
+    const currentLat = Number(current[0]);
+    const currentLon = Number(current[1]);
+    const previousLat = Number(previous[0]);
+    const previousLon = Number(previous[1]);
+
+    if (
+      Number.isNaN(currentLat) ||
+      Number.isNaN(currentLon) ||
+      Number.isNaN(previousLat) ||
+      Number.isNaN(previousLon)
+    ) {
+      continue;
+    }
+
+    if (isPointOnSegment(point, current, previous)) {
+      return true;
+    }
+
+    const intersects =
+      currentLat > targetLat !== previousLat > targetLat &&
+      targetLon <
+        ((previousLon - currentLon) * (targetLat - currentLat)) /
+          (previousLat - currentLat || Number.EPSILON) +
+          currentLon;
+
+    if (intersects) {
+      inside = !inside;
     }
   }
-  return { geoObject: null, geometry: null };
+
+  return inside;
+}
+
+function geometryContainsCoordinates(geometry, point) {
+  if (!geometry || !geometry.type || !Array.isArray(geometry.coordinates)) {
+    return false;
+  }
+
+  const polygonContainsPoint = (polygonRings) => {
+    if (!Array.isArray(polygonRings) || polygonRings.length === 0) {
+      return false;
+    }
+
+    const [outerRing, ...holes] = polygonRings;
+    if (!isPointInRing(outerRing, point)) {
+      return false;
+    }
+
+    for (const hole of holes) {
+      if (isPointInRing(hole, point)) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  if (geometry.type === 'Polygon') {
+    return polygonContainsPoint(geometry.coordinates);
+  }
+
+  if (geometry.type === 'MultiPolygon') {
+    for (const polygon of geometry.coordinates) {
+      if (polygonContainsPoint(polygon)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  return false;
+}
+
+function getGeometryCentroid(geometry) {
+  const rings = getPolygonRings(geometry);
+  if (!rings.length) {
+    return null;
+  }
+
+  const outerRing = rings[0];
+  if (!Array.isArray(outerRing) || !outerRing.length) {
+    return null;
+  }
+
+  let latSum = 0;
+  let lonSum = 0;
+  let count = 0;
+
+  for (const point of outerRing) {
+    if (!Array.isArray(point) || point.length < 2) {
+      continue;
+    }
+    const lat = Number(point[0]);
+    const lon = Number(point[1]);
+    if (Number.isNaN(lat) || Number.isNaN(lon)) {
+      continue;
+    }
+    latSum += lat;
+    lonSum += lon;
+    count += 1;
+  }
+
+  if (!count) {
+    return null;
+  }
+
+  return [latSum / count, lonSum / count];
+}
+
+function calculateApproxDistance(pointA, pointB) {
+  if (!Array.isArray(pointA) || !Array.isArray(pointB)) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const [lat1, lon1] = pointA.map(Number);
+  const [lat2, lon2] = pointB.map(Number);
+
+  if (
+    Number.isNaN(lat1) ||
+    Number.isNaN(lon1) ||
+    Number.isNaN(lat2) ||
+    Number.isNaN(lon2)
+  ) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const toRadians = (value) => (value * Math.PI) / 180;
+  const earthRadius = 6371000; // meters
+  const deltaLat = toRadians(lat2 - lat1);
+  const deltaLon = toRadians(lon2 - lon1);
+  const lat1Rad = toRadians(lat1);
+  const lat2Rad = toRadians(lat2);
+
+  const a =
+    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    Math.sin(deltaLon / 2) * Math.sin(deltaLon / 2) * Math.cos(lat1Rad) * Math.cos(lat2Rad);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return earthRadius * c;
+}
+
+function findGeoObjectWithPolygon(candidates, point = null) {
+  let closestCandidate = null;
+  let closestDistance = Number.POSITIVE_INFINITY;
+
+  for (const candidate of candidates) {
+    const geometry = extractPolygonGeometry(candidate);
+    if (!geometry) {
+      continue;
+    }
+
+    if (point && geometryContainsCoordinates(geometry, point)) {
+      logHouseDebug(
+        `Polygon candidate for ${candidate.getAddressLine?.() || 'unknown'} contains the selected point`
+      );
+      return { geoObject: candidate, geometry, containsPoint: true };
+    }
+
+    if (!closestCandidate) {
+      closestCandidate = { geoObject: candidate, geometry, containsPoint: false };
+    }
+
+    if (point) {
+      const centroid = getGeometryCentroid(geometry);
+      if (centroid) {
+        const distance = calculateApproxDistance(point, centroid);
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestCandidate = { geoObject: candidate, geometry, containsPoint: false };
+        }
+      }
+    }
+  }
+
+  return closestCandidate || { geoObject: null, geometry: null, containsPoint: false };
 }
 
 async function resolveHouseLocation(coords, options = {}) {
@@ -405,10 +655,17 @@ async function resolveHouseLocation(coords, options = {}) {
     primaryGeoObjects = [];
   }
 
-  const bestCandidate = findGeoObjectWithPolygon(primaryGeoObjects);
+  const bestCandidate = findGeoObjectWithPolygon(primaryGeoObjects, coords);
   let resolvedGeoObject = bestCandidate.geoObject || primaryGeoObjects[0] || null;
   let resolvedGeometry = bestCandidate.geometry;
   let resolvedAddress = resolvedGeoObject?.getAddressLine() || knownAddress || null;
+
+  if (resolvedGeometry && coords && !geometryContainsCoordinates(resolvedGeometry, coords)) {
+    logHouseWarn(
+      'Resolved polygon does not contain the selected point. Attempting alternative geocoding strategies.'
+    );
+    resolvedGeometry = null;
+  }
 
   if (resolvedGeoObject) {
     const candidateAddress = resolvedGeoObject.getAddressLine() || 'unknown';
@@ -426,7 +683,7 @@ async function resolveHouseLocation(coords, options = {}) {
       });
       const addressCandidates = collectGeoObjects(addressGeocode.geoObjects);
       logHouseDebug(`Received ${addressCandidates.length} candidates from address geocoding`);
-      const byAddress = findGeoObjectWithPolygon(addressCandidates);
+      const byAddress = findGeoObjectWithPolygon(addressCandidates, coords);
       if (byAddress.geometry) {
         resolvedGeometry = byAddress.geometry;
         if (!resolvedGeoObject) {
@@ -434,13 +691,30 @@ async function resolveHouseLocation(coords, options = {}) {
         }
         resolvedAddress =
           byAddress.geoObject?.getAddressLine() || resolvedAddress || knownAddress || null;
-        logHouseInfo(`Resolved polygon geometry via address geocoding for ${resolvedAddress}`);
+
+        if (coords && !geometryContainsCoordinates(resolvedGeometry, coords)) {
+          logHouseWarn(
+            'Address-based polygon does not contain the selected point. Discarding inaccurate result.'
+          );
+          resolvedGeometry = null;
+          if (!byAddress.containsPoint) {
+            resolvedGeoObject = null;
+          }
+        } else {
+          logHouseInfo(`Resolved polygon geometry via address geocoding for ${resolvedAddress}`);
+        }
       }
     } catch (error) {
       if (!suppressErrors) {
         logHouseError(`Error during address geocoding for ${resolvedAddress}`, error);
       }
     }
+  }
+
+  if (resolvedGeometry && coords && geometryContainsCoordinates(resolvedGeometry, coords)) {
+    logHouseInfo('Confirmed that the resolved polygon contains the selected point.');
+  } else if (!resolvedGeometry) {
+    logHouseWarn('Failed to resolve a polygon that matches the selected point.');
   }
 
   return {
