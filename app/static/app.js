@@ -244,11 +244,18 @@ async function handleCreateModalSubmit(event) {
 }
 
 function initMap() {
-  mapInstance = new ymaps.Map('map', {
-    center: [61.524, 105.3188],
-    zoom: 4,
-    controls: ['zoomControl', 'geolocationControl', 'typeSelector']
-  });
+  mapInstance = new ymaps.Map(
+    'map',
+    {
+      center: [61.524, 105.3188],
+      zoom: 4,
+      type: 'yandex#map',
+      controls: ['zoomControl', 'geolocationControl', 'typeSelector']
+    },
+    {
+      suppressMapOpenBlock: true
+    }
+  );
 
   mapInstance.behaviors.disable('dblClickZoom');
   lastZoomLevel = mapInstance.getZoom();
@@ -310,19 +317,91 @@ async function ensureHouseGeometry(house) {
   }
 
   try {
-    const geocode = await ymaps.geocode([house.latitude, house.longitude], {
-      kind: 'house',
-      results: 1
+    const result = await resolveHouseLocation([house.latitude, house.longitude], {
+      knownAddress: house.address,
+      suppressErrors: true
     });
-    const geoObject = geocode.geoObjects.get(0);
-    const geometry = extractPolygonGeometry(geoObject);
-    geometryCache.set(house.id, geometry || null);
-    return geometry || null;
+    geometryCache.set(house.id, result.geometry || null);
+    return result.geometry || null;
   } catch (error) {
     console.error(error);
     geometryCache.set(house.id, null);
     return null;
   }
+}
+
+function collectGeoObjects(geoObjectsCollection) {
+  const items = [];
+  if (!geoObjectsCollection || typeof geoObjectsCollection.each !== 'function') {
+    return items;
+  }
+  geoObjectsCollection.each((item) => {
+    items.push(item);
+  });
+  return items;
+}
+
+function findGeoObjectWithPolygon(candidates) {
+  for (const candidate of candidates) {
+    const geometry = extractPolygonGeometry(candidate);
+    if (geometry) {
+      return { geoObject: candidate, geometry };
+    }
+  }
+  return { geoObject: null, geometry: null };
+}
+
+async function resolveHouseLocation(coords, options = {}) {
+  const { knownAddress = null, suppressErrors = false } = options;
+  const searchOptions = {
+    kind: 'house',
+    results: 10
+  };
+
+  let primaryGeoObjects;
+  try {
+    const geocode = await ymaps.geocode(coords, searchOptions);
+    primaryGeoObjects = collectGeoObjects(geocode.geoObjects);
+  } catch (error) {
+    if (!suppressErrors) {
+      console.error(error);
+    }
+    primaryGeoObjects = [];
+  }
+
+  const bestCandidate = findGeoObjectWithPolygon(primaryGeoObjects);
+  let resolvedGeoObject = bestCandidate.geoObject || primaryGeoObjects[0] || null;
+  let resolvedGeometry = bestCandidate.geometry;
+  let resolvedAddress = resolvedGeoObject?.getAddressLine() || knownAddress || null;
+
+  if (!resolvedGeometry && resolvedAddress) {
+    try {
+      const addressGeocode = await ymaps.geocode(resolvedAddress, {
+        kind: 'house',
+        results: 10
+      });
+      const addressCandidates = collectGeoObjects(addressGeocode.geoObjects);
+      const byAddress = findGeoObjectWithPolygon(addressCandidates);
+      if (byAddress.geometry) {
+        resolvedGeometry = byAddress.geometry;
+        if (!resolvedGeoObject) {
+          resolvedGeoObject = byAddress.geoObject;
+        }
+        resolvedAddress =
+          byAddress.geoObject?.getAddressLine() || resolvedAddress || knownAddress || null;
+      }
+    } catch (error) {
+      if (!suppressErrors) {
+        console.error(error);
+      }
+    }
+  }
+
+  return {
+    geoObject: resolvedGeoObject,
+    geometry: resolvedGeometry,
+    address: resolvedAddress
+  };
 }
 
 function extractPolygonGeometry(geoObject) {
@@ -591,25 +670,20 @@ async function handleHouseDoubleClick(coords) {
   }
 
   try {
-    const geocode = await ymaps.geocode(coords, {
-      kind: 'house',
-      results: 1
-    });
-    const geoObject = geocode.geoObjects.get(0);
+    const { geoObject, geometry, address } = await resolveHouseLocation(coords);
+
     if (!geoObject) {
       showNotification('Не удалось определить дом. Попробуйте приблизить карту.', 'error');
       return;
     }
 
-    const geometry = extractPolygonGeometry(geoObject);
     if (!geometry) {
-      showNotification('Не удалось получить контур дома. Попробуйте выбрать другой дом.', 'error');
+      showNotification('Контур дома не найден. Попробуйте выбрать другой дом.', 'error');
       return;
     }
 
-    const address = geoObject.getAddressLine() || 'Адрес не найден';
     openCreateModal({
-      address,
+      address: address || 'Адрес не найден',
       coords,
       geometry
     });
