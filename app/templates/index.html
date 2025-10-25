@@ -28,60 +28,50 @@
           <li><span class="legend-dot legend-green"></span> Перспективные дома</li>
         </ul>
         <div class="instructions">
-          <h3>Инструкции</h3>
+          <h3>Как работать с картой</h3>
           <ol>
-            <li>Нажмите «Выбрать на карте» и укажите дом для создания новой карточки.</li>
-            <li>Заполните адрес (он подставится автоматически) и сохраните карточку.</li>
-            <li>Выберите дом на карте, чтобы открыть и обновить статус.</li>
-            <li>Комментарии отображаются при приближении к дому (зум &ge; 15).</li>
+            <li>Дважды кликните по дому на карте, чтобы создать новую карточку.</li>
+            <li>Выберите статус и при необходимости добавьте комментарий в появившемся окне.</li>
+            <li>Нажмите на дом, чтобы изменить статус или оставить дополнительные комментарии.</li>
+            <li>Комментарии доступны при приближении к дому (зум &ge; 15).</li>
           </ol>
         </div>
-        <section class="create-house">
-          <h3>Новая карточка</h3>
-          <p class="create-house__hint">
-            Нажмите &laquo;Выбрать на карте&raquo;, а затем укажите дом. Адрес заполнится автоматически,
-            при необходимости его можно отредактировать.
-          </p>
-          <form id="create-house-form" class="create-house__form">
-            <div class="form-field">
-              <label for="create-house-address">Адрес</label>
-              <input
-                id="create-house-address"
-                name="address"
-                type="text"
-                placeholder="Выберите точку на карте"
-                required
-                maxlength="255"
-              />
-            </div>
-            <div class="form-field create-house__coordinates">
-              <div>
-                <label for="create-house-latitude">Широта</label>
-                <input id="create-house-latitude" name="latitude" type="number" step="0.000001" required />
-              </div>
-              <div>
-                <label for="create-house-longitude">Долгота</label>
-                <input id="create-house-longitude" name="longitude" type="number" step="0.000001" required />
-              </div>
-            </div>
-            <div class="form-field">
-              <label for="create-house-status">Статус</label>
-              <select id="create-house-status" name="status">
-                <option value="red">Неинтересный</option>
-                <option value="yellow" selected>Спорный</option>
-                <option value="green">Интересный</option>
-              </select>
-            </div>
-            <div class="create-house__actions">
-              <button type="button" id="pick-house-location">Выбрать на карте</button>
-              <button type="button" id="cancel-pick-house" class="secondary" hidden>Отменить</button>
-              <button type="submit" class="primary">Создать карточку</button>
-            </div>
-          </form>
-        </section>
+        <p class="info-panel__hint">Каждый дом на карте подсвечивается целиком согласно его статусу.</p>
       </aside>
     </main>
     <div id="notifications" class="notifications"></div>
+    <div id="create-modal" class="modal hidden" role="dialog" aria-hidden="true" aria-labelledby="create-modal-title">
+      <div class="modal__overlay" data-modal-close></div>
+      <div class="modal__dialog">
+        <button type="button" class="modal__close" data-modal-close aria-label="Закрыть окно">&times;</button>
+        <h3 id="create-modal-title">Новая карточка дома</h3>
+        <p id="create-modal-address" class="modal__address"></p>
+        <form id="create-modal-form" class="modal__form">
+          <div class="form-field">
+            <label for="create-modal-status">Статус</label>
+            <select id="create-modal-status" name="status">
+              <option value="red">Неинтересный</option>
+              <option value="yellow" selected>Спорный</option>
+              <option value="green">Интересный</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="create-modal-comment">Комментарий</label>
+            <textarea
+              id="create-modal-comment"
+              name="comment"
+              placeholder="Добавьте заметку (необязательно)"
+              maxlength="1000"
+              rows="4"
+            ></textarea>
+          </div>
+          <div class="modal__actions">
+            <button type="submit" class="primary">Создать карточку</button>
+            <button type="button" class="secondary" data-modal-close>Отмена</button>
+          </div>
+        </form>
+      </div>
+    </div>
     <script src="/static/app.js"></script>
   </body>
 </html>
