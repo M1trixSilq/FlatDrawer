@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, validator
 
 from app.models import HouseStatus
 
@@ -20,8 +20,7 @@ class CommentRead(CommentBase):
     house_id: int
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class HouseBase(BaseModel):
@@ -72,12 +71,11 @@ class HouseRead(HouseBase):
     updated_at: datetime
     comments: List[CommentRead] = Field(default_factory=list)
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BuildingGeometry(BaseModel):
-    type: str = Field(..., regex=r"^(Polygon|MultiPolygon)$")
+    type: str = Field(..., pattern=r"^(Polygon|MultiPolygon)$")
     coordinates: Any
 
 
