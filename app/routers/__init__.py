@@ -1,3 +1,3 @@
-from . import comments, houses
+from . import buildings, comments, houses
 
-__all__ = ["comments", "houses"]
+__all__ = ["buildings", "comments", "houses"]

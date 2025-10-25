@@ -21,7 +21,7 @@ from app import schemas
 from app.cache import houses_cache
 from app.database import SessionLocal, init_db
 from app.models import House
-from app.routers import comments, houses
+from app.routers import buildings, comments, houses
 
 
 def configure_logging() -> None:
@@ -54,6 +54,7 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 app.include_router(houses.router)
 app.include_router(comments.router)
+app.include_router(buildings.router)
 
 
 @app.on_event("startup")
@@ -84,13 +85,13 @@ def preload_houses_cache(db: Session) -> None:
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
-    yandex_maps_api_key = os.getenv("YANDEX_MAPS_API_KEY", "")
-    logger.debug("Rendering index page. API key present: %s", bool(yandex_maps_api_key))
+    google_maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY", "")
+    logger.debug("Rendering index page. API key present: %s", bool(google_maps_api_key))
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
-            "yandex_maps_api_key": yandex_maps_api_key,
-            "has_api_key": bool(yandex_maps_api_key),
+            "google_maps_api_key": google_maps_api_key,
+            "has_api_key": bool(google_maps_api_key),
         },
     )
