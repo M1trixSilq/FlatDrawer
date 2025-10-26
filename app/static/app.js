@@ -805,14 +805,21 @@ async function initMap() {
   mapInstance = new ymaps.Map(
     mapElement,
     {
-      center: [61.524, 105.3188],
-      zoom: 4,
+      center: [52.608, 39.599],
+      zoom: 11,
       controls: ['zoomControl', 'typeSelector', 'fullscreenControl']
     },
     {
       suppressMapOpenBlock: true
     }
   );
+
+  const lipetskBounds = [
+    [52.35, 39.3],
+    [52.9, 40.0]
+  ];
+  mapInstance.setBounds(lipetskBounds, { checkZoomRange: true, duration: 0 });
+  mapInstance.options.set('restrictMapArea', lipetskBounds);
 
   mapInstance.options.set('doubleClickZoom', false);
 
