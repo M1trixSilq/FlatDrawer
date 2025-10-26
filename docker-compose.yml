@@ -1,0 +1,11 @@
+services:
+  app:
+    build: .
+    image: flatdrawer:latest
+    ports:
+      - "8000:8000"
+    environment:
+      LOG_LEVEL: info
+    env_file:
+      - .env
+    restart: unless-stopped
