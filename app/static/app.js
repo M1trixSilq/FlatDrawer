@@ -845,13 +845,20 @@ async function initMap() {
 }
 
 
-document.addEventListener('DOMContentLoaded', () => {
+function bootstrapApplication() {
   ensureCreationModalElements();
   initStatusFilters();
 
   waitForYandexMaps()
     .then(() => ymaps.ready(initMap))
-    .catch(() => {
+    .catch((error) => {
+      console.error(error);
       showNotification('Скрипт Яндекс.Карт не загрузился', 'error');
     });
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', bootstrapApplication);
+} else {
+  bootstrapApplication();
+}
