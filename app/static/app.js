@@ -504,17 +504,36 @@ async function resolveHouseAddress(coords) {
     return null;
   }
 
-  try {
-    const geocodeResult = await ymaps.geocode(coords, { kind: 'house', results: 1 });
-    const firstGeoObject = geocodeResult.geoObjects.get(0);
-    if (!firstGeoObject) {
-      return null;
+  const providers = ['yandex#map', 'yandex#search', 'yandex#geocoder'];
+
+  for (const provider of providers) {
+    try {
+      const geocodeResult = await ymaps.geocode(coords, {
+        kind: 'house',
+        results: 1,
+        provider
+      });
+
+      const firstGeoObject = geocodeResult.geoObjects.get(0);
+      if (!firstGeoObject) {
+        continue;
+      }
+
+      const address =
+        firstGeoObject.getAddressLine?.() ||
+        firstGeoObject.properties?.get('text') ||
+        firstGeoObject.properties?.get('name');
+
+      if (address) {
+        return address;
+      }
+    } catch (error) {
+      console.warn(`Failed to resolve address via provider ${provider}`, error);
     }
-    return firstGeoObject.getAddressLine();
-  } catch (error) {
-    console.error('Failed to resolve address via Yandex Maps', error);
-    return null;
   }
+
+  console.error('Failed to resolve address via any Yandex Maps provider');
+  return null;
 }
 
 async function openHouseBalloon(house, placemark) {
