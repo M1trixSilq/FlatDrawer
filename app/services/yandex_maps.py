@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict, Optional
 
 import httpx
@@ -10,6 +11,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 YANDEX_GEOCODER_URL = "https://geocode-maps.yandex.ru/1.x"
+YANDEX_MAPS_API_KEY = os.getenv("YANDEX_MAPS_API_KEY", "")
 
 
 def _extract_address(payload: Dict[str, Any]) -> Optional[str]:
@@ -50,6 +52,8 @@ async def reverse_geocode(lat: float, lon: float) -> Optional[str]:
         "sco": "latlong",
         "geocode": f"{lon},{lat}",
     }
+    if YANDEX_MAPS_API_KEY:
+        params["apikey"] = YANDEX_MAPS_API_KEY
     headers = {
         "User-Agent": "FlatDrawer/1.0 (contact@flatdrawer.local)",
         "Accept-Language": "ru,en;q=0.5",

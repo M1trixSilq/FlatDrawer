@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 from typing import List
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
@@ -12,10 +13,16 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session, joinedload
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 if __package__ in {None, ""}:
-    project_root = Path(__file__).resolve().parent.parent
-    if str(project_root) not in sys.path:
-        sys.path.append(str(project_root))
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.append(str(PROJECT_ROOT))
+
+# Ensure environment variables from a local .env file are available when running
+# the application without Docker. Missing API keys prevented the Yandex map from
+# initialising on start.
+load_dotenv(PROJECT_ROOT / ".env")
 
 from app import schemas
 from app.cache import houses_cache
