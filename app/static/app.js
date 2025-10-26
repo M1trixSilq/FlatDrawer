@@ -815,10 +815,11 @@ async function initMap() {
   );
 
   const lipetskBounds = [
-    [52.75, 39.4],
-    [52.45, 39.8]
+    [52.35, 39.3],
+    [52.9, 40.0]
   ];
   mapInstance.setBounds(lipetskBounds, { checkZoomRange: true, duration: 0 });
+  mapInstance.options.set('restrictMapArea', lipetskBounds);
 
   mapInstance.options.set('doubleClickZoom', false);
 
