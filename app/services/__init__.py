@@ -2,4 +2,5 @@
 
 __all__ = [
     "building_detector",
+    "yandex_maps",
 ]
