@@ -133,29 +133,14 @@ function openCreateModal(context) {
   }
 
   const coords = Array.isArray(context.coords) ? [...context.coords] : context.coords;
-  const address = context.address ?? '';
-  const placeholder =
-    typeof context.addressPlaceholder === 'string'
-      ? context.addressPlaceholder
-      : address
-        ? 'Уточните адрес при необходимости'
-        : 'Адрес не найден. Укажите вручную';
-
-  activeCreationContext = {
-    coords,
-    address
-  };
-  creationInProgress = false;
-
-  const coords = Array.isArray(context.coords) ? [...context.coords] : context.coords;
   const initialAddress = context.address ?? '';
   const requestId = context.requestId ?? Date.now();
   const placeholder =
     typeof context.addressPlaceholder === 'string'
       ? context.addressPlaceholder
       : initialAddress
-        ? elements.addressField?.placeholder ?? ''
-        : 'Адрес не найден';
+        ? 'Уточните адрес при необходимости'
+        : 'Адрес не найден. Укажите вручную';
   const isResolving = Boolean(context.isResolving);
 
   activeCreationContext = {
@@ -164,11 +149,12 @@ function openCreateModal(context) {
     requestId,
     isResolving
   };
+  creationInProgress = false;
 
   if (elements.addressField) {
-    elements.addressField.value = address;
+    elements.addressField.value = initialAddress;
     elements.addressField.placeholder = placeholder;
-    elements.addressField.classList.remove('is-loading');
+    elements.addressField.classList.toggle('is-loading', isResolving && !initialAddress);
   }
 
   if (elements.statusSelect) {
