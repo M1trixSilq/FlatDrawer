@@ -59,8 +59,19 @@
       <div class="modal__dialog">
         <button type="button" class="modal__close" data-modal-close aria-label="Закрыть окно">&times;</button>
         <h3 id="create-modal-title">Новая карточка дома</h3>
-        <p id="create-modal-address" class="modal__address"></p>
         <form id="create-modal-form" class="modal__form">
+          <div class="form-field">
+            <label for="create-modal-address">Адрес</label>
+            <input
+              id="create-modal-address"
+              name="address"
+              type="text"
+              class="modal__address"
+              placeholder="Определяем адрес..."
+              autocomplete="off"
+              required
+            />
+          </div>
           <div class="form-field">
             <label for="create-modal-status">Статус</label>
             <select id="create-modal-status" name="status">
