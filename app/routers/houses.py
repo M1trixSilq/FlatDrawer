@@ -71,6 +71,8 @@ async def create_house(
     if resolved_address:
         house_data["address"] = resolved_address
         logger.debug("Address resolved automatically: %s", resolved_address)
+    else:
+        logger.debug("Using submitted address for lat=%s lon=%s", house_in.latitude, house_in.longitude)
 
     house = models.House(**house_data)
     db.add(house)

@@ -3,6 +3,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import httpx
 
+from app.services import yandex_maps
+
 logger = logging.getLogger(__name__)
 
 OVERPASS_API_URL = "https://overpass-api.de/api/interpreter"
@@ -62,6 +64,14 @@ async def _fetch_overpass_geometries(lat: float, lon: float) -> List[Dict[str, A
 
 
 async def _reverse_geocode(lat: float, lon: float) -> Optional[str]:
+    address = await yandex_maps.reverse_geocode(lat, lon)
+    if address:
+        return address
+
+    return await _reverse_geocode_nominatim(lat, lon)
+
+
+async def _reverse_geocode_nominatim(lat: float, lon: float) -> Optional[str]:
     headers = {"User-Agent": "FlatDrawer/1.0 (contact@flatdrawer.local)"}
     params = {
         "format": "jsonv2",
@@ -77,7 +87,12 @@ async def _reverse_geocode(lat: float, lon: float) -> Optional[str]:
         response.raise_for_status()
         data = response.json()
     except httpx.HTTPError as exc:
-        logger.warning("Reverse geocoding failed for lat=%s lon=%s: %s", lat, lon, exc)
+        logger.warning(
+            "Nominatim reverse geocoding failed for lat=%s lon=%s: %s",
+            lat,
+            lon,
+            exc,
+        )
         return None
 
     if isinstance(data, dict):
