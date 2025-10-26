@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FlatDrawer</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script
+      src="https://api-maps.yandex.ru/2.1/?lang=ru_RU{% if yandex_maps_api_key %}&apikey={{ yandex_maps_api_key }}{% endif %}"
+      defer
+    ></script>
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>FlatDrawer</h1>
+      <p class="app-subtitle">Помечайте интересные дома для флиппинга прямо на карте России</p>
+    </header>
+    <main class="app-container">
+      <section class="map-wrapper">
+        <div id="map"></div>
+      </section>
+      <aside class="info-panel">
+        <h2>Легенда</h2>
+        <ul class="legend">
+          <li><span class="legend-dot legend-red"></span> Неинтересные дома</li>
+          <li><span class="legend-dot legend-yellow"></span> Спорные объекты</li>
+          <li><span class="legend-dot legend-green"></span> Перспективные дома</li>
+        </ul>
+        <div class="status-filters" role="group" aria-label="Фильтр по статусам домов">
+          <h3>Фильтр по статусу</h3>
+          <label>
+            <input type="checkbox" value="red" data-status-filter checked />
+            <span><span class="legend-dot legend-red"></span> Неинтересные</span>
+          </label>
+          <label>
+            <input type="checkbox" value="yellow" data-status-filter checked />
+            <span><span class="legend-dot legend-yellow"></span> Спорные</span>
+          </label>
+          <label>
+            <input type="checkbox" value="green" data-status-filter checked />
+            <span><span class="legend-dot legend-green"></span> Интересные</span>
+          </label>
+        </div>
+        <div class="instructions">
+          <h3>Как работать с картой</h3>
+          <ol>
+            <li>Дважды кликните по точке на карте, чтобы создать карточку дома.</li>
+            <li>Выберите статус и при необходимости добавьте комментарий в появившемся окне.</li>
+            <li>Нажмите на метку дома, чтобы изменить статус или оставить дополнительные комментарии.</li>
+            <li>Комментарии доступны при приближении к метке (зум &ge; 15).</li>
+          </ol>
+        </div>
+        <p class="info-panel__hint">Каждый дом отмечается цветной точкой. Используйте фильтр, чтобы сосредоточиться на нужных статусах.</p>
+      </aside>
+    </main>
+    <div id="notifications" class="notifications"></div>
+    <div id="create-modal" class="modal hidden" role="dialog" aria-hidden="true" aria-labelledby="create-modal-title">
+      <div class="modal__overlay" data-modal-close></div>
+      <div class="modal__dialog">
+        <button type="button" class="modal__close" data-modal-close aria-label="Закрыть окно">&times;</button>
+        <h3 id="create-modal-title">Новая карточка дома</h3>
+        <form id="create-modal-form" class="modal__form">
+          <div class="form-field">
+            <label for="create-modal-status">Статус</label>
+            <select id="create-modal-status" name="status">
+              <option value="red">Неинтересный</option>
+              <option value="yellow" selected>Спорный</option>
+              <option value="green">Интересный</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="create-modal-comment">Комментарий</label>
+            <textarea
+              id="create-modal-comment"
+              name="comment"
+              placeholder="Добавьте заметку (необязательно)"
+              maxlength="1000"
+              rows="4"
+            ></textarea>
+          </div>
+          <div class="modal__actions">
+            <button type="submit" class="primary">Создать карточку</button>
+            <button type="button" class="secondary" data-modal-close>Отмена</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
