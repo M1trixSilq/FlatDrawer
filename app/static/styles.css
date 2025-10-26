@@ -288,19 +288,6 @@ body {
   line-height: 1;
 }
 
-.modal__address {
-  width: 100%;
-}
-
-.modal__address::placeholder {
-  color: rgba(226, 232, 240, 0.55);
-}
-
-.modal__address.is-loading {
-  color: rgba(226, 232, 240, 0.6);
-  font-style: italic;
-}
-
 .modal__form {
   display: flex;
   flex-direction: column;
