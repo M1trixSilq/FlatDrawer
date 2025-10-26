@@ -289,13 +289,16 @@ body {
 }
 
 .modal__address {
-  margin: 0;
-  padding: 0.65rem 0.75rem;
-  border-radius: 0.65rem;
-  background: rgba(15, 23, 42, 0.45);
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  font-size: 0.95rem;
-  color: rgba(226, 232, 240, 0.85);
+  width: 100%;
+}
+
+.modal__address::placeholder {
+  color: rgba(226, 232, 240, 0.55);
+}
+
+.modal__address.is-loading {
+  color: rgba(226, 232, 240, 0.6);
+  font-style: italic;
 }
 
 .modal__form {
