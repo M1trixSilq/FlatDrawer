@@ -5,8 +5,6 @@ const STATUS_COLORS = {
 };
 
 const COMMENT_ZOOM_THRESHOLD = 15;
-const AUTO_OPEN_ZOOM_THRESHOLD = COMMENT_ZOOM_THRESHOLD;
-const AUTO_OPEN_DISTANCE_METERS = 200;
 
 let mapInstance;
 let openHouseId = null;
@@ -629,172 +627,6 @@ async function submitComment(payload) {
   return await response.json();
 }
 
-function autoOpenHouseNearCenter(currentZoom) {
-  if (!mapInstance || !window.ymaps) {
-    return;
-  }
-
-  if (typeof currentZoom !== 'number' || currentZoom < AUTO_OPEN_ZOOM_THRESHOLD) {
-    return;
-  }
-
-  const center = mapInstance.getCenter();
-  if (!Array.isArray(center)) {
-    return;
-  }
-
-  const ymapsGeo = window.ymaps && window.ymaps.coordSystem && window.ymaps.coordSystem.geo;
-  if (!ymapsGeo || typeof ymapsGeo.getDistance !== 'function') {
-    return;
-  }
-
-  let candidate = null;
-
-  placemarkState.forEach((placemark, houseId) => {
-    const house = houseState.get(houseId);
-    if (!house || !placemark) {
-      return;
-    }
-
-    const isVisible = placemark.options.get('visible');
-    if (isVisible === false) {
-      return;
-    }
-
-    const coords =
-      placemark.geometry && typeof placemark.geometry.getCoordinates === 'function'
-        ? placemark.geometry.getCoordinates()
-        : null;
-
-    if (!Array.isArray(coords)) {
-      return;
-    }
-
-    const distance = ymapsGeo.getDistance(center, coords);
-    if (!Number.isFinite(distance)) {
-      return;
-    }
-
-    if (!candidate || distance < candidate.distance) {
-      candidate = { house, placemark, distance };
-    }
-  });
-
-  if (!candidate || candidate.distance > AUTO_OPEN_DISTANCE_METERS) {
-    return;
-  }
-
-  if (openHouseId === candidate.house.id) {
-    return;
-  }
-
-  openHouseBalloon(candidate.house, candidate.placemark);
-}
-
-function focusOnDensestArea(houses = []) {
-  if (!mapInstance || !window.ymaps || !Array.isArray(houses) || !houses.length) {
-    return;
-  }
-
-  const normalized = houses
-    .map((house) => ({
-      id: house.id,
-      latitude: Number(house.latitude),
-      longitude: Number(house.longitude)
-    }))
-    .filter((item) => Number.isFinite(item.latitude) && Number.isFinite(item.longitude));
-
-  if (!normalized.length) {
-    return;
-  }
-
-  const ymapsGeo = window.ymaps?.coordSystem?.geo;
-
-  const moveToBounds = (points) => {
-    const boundsFunction = window.ymaps?.util?.bounds?.fromPoints;
-    const bounds = typeof boundsFunction === 'function' ? boundsFunction(points) : null;
-
-    if (bounds) {
-      mapInstance.setBounds(bounds, { checkZoomRange: true, duration: 300, zoomMargin: 40 });
-    } else {
-      const average = points.reduce(
-        (acc, [lat, lon]) => {
-          return { latitude: acc.latitude + lat, longitude: acc.longitude + lon };
-        },
-        { latitude: 0, longitude: 0 }
-      );
-      const center = [average.latitude / points.length, average.longitude / points.length];
-      mapInstance.setCenter(center, Math.max(mapInstance.getZoom() || 0, 14), { duration: 300 });
-    }
-  };
-
-  if (!ymapsGeo || typeof ymapsGeo.getDistance !== 'function') {
-    moveToBounds(normalized.map((item) => [item.latitude, item.longitude]));
-    return;
-  }
-
-  const radii = [200, 400, 800, 1600];
-  let bestCluster = null;
-
-  const calculateAverageDistance = (anchor, members) => {
-    if (!members.length) {
-      return Infinity;
-    }
-    const anchorPoint = [anchor.latitude, anchor.longitude];
-    const totalDistance = members.reduce((acc, member) => {
-      const distance = ymapsGeo.getDistance(anchorPoint, [member.latitude, member.longitude]);
-      return Number.isFinite(distance) ? acc + distance : acc;
-    }, 0);
-    return totalDistance / members.length;
-  };
-
-  for (const radius of radii) {
-    for (const anchor of normalized) {
-      const anchorPoint = [anchor.latitude, anchor.longitude];
-      const members = normalized.filter((candidate) => {
-        const distance = ymapsGeo.getDistance(anchorPoint, [candidate.latitude, candidate.longitude]);
-        return Number.isFinite(distance) && distance <= radius;
-      });
-
-      if (members.length <= 1 && normalized.length > 1) {
-        continue;
-      }
-
-      const averageDistance = calculateAverageDistance(anchor, members);
-      const bestCount = bestCluster ? bestCluster.members.length : 0;
-
-      const isBetterCluster =
-        !bestCluster ||
-        members.length > bestCount ||
-        (members.length === bestCount && averageDistance < bestCluster.averageDistance) ||
-        (members.length === bestCount && averageDistance === bestCluster.averageDistance && radius < bestCluster.radius);
-
-      if (isBetterCluster) {
-        bestCluster = { members, radius, averageDistance };
-      }
-    }
-
-    if (bestCluster && bestCluster.members.length >= 3) {
-      break;
-    }
-  }
-
-  const targetMembers =
-    bestCluster && (bestCluster.members.length > 1 || normalized.length === 1)
-      ? bestCluster.members
-      : normalized;
-
-  if (targetMembers.length === 1) {
-    const [single] = targetMembers;
-    mapInstance.setCenter([single.latitude, single.longitude], Math.max(mapInstance.getZoom() || 0, 16), {
-      duration: 300
-    });
-    return;
-  }
-
-  moveToBounds(targetMembers.map((item) => [item.latitude, item.longitude]));
-}
-
 async function initMap() {
   const mapElement = document.getElementById('map');
   if (!mapElement) {
@@ -805,14 +637,21 @@ async function initMap() {
   mapInstance = new ymaps.Map(
     mapElement,
     {
-      center: [61.524, 105.3188],
-      zoom: 4,
+      center: [52.608, 39.599],
+      zoom: 11,
       controls: ['zoomControl', 'typeSelector', 'fullscreenControl']
     },
     {
       suppressMapOpenBlock: true
     }
   );
+
+  const lipetskBounds = [
+    [52.35, 39.3],
+    [52.9, 40.0]
+  ];
+  mapInstance.setBounds(lipetskBounds, { checkZoomRange: true, duration: 0 });
+  mapInstance.options.set('restrictMapArea', lipetskBounds);
 
   mapInstance.options.set('doubleClickZoom', false);
 
@@ -855,10 +694,6 @@ async function initMap() {
       }
     }
 
-    const zoomForAutoOpen = newZoomIsNumber ? newZoom : mapInstance.getZoom();
-    if (typeof zoomForAutoOpen === 'number' && zoomForAutoOpen >= AUTO_OPEN_ZOOM_THRESHOLD && (zoomChanged || centerChanged)) {
-      autoOpenHouseNearCenter(zoomForAutoOpen);
-    }
   });
 
   mapInstance.events.add('dblclick', (event) => {
@@ -868,8 +703,7 @@ async function initMap() {
     handleHouseDoubleClick(coords);
   });
 
-  const houses = await loadHouses();
-  focusOnDensestArea(houses);
+  await loadHouses();
 }
 
 
