@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.cache import houses_cache
 from app import models, schemas
 from app.database import get_db
+from app.services import building_detector
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +50,29 @@ def read_house(house_id: int, db: Session = Depends(get_db)) -> schemas.HouseRea
 
 
 @router.post("/", response_model=schemas.HouseRead, status_code=status.HTTP_201_CREATED)
-def create_house(house_in: schemas.HouseCreate, db: Session = Depends(get_db)) -> schemas.HouseRead:
+async def create_house(
+    house_in: schemas.HouseCreate, db: Session = Depends(get_db)
+) -> schemas.HouseRead:
     logger.info("Creating new house entry")
-    house = models.House(**house_in.dict())
+
+    resolved_address = None
+    try:
+        _, resolved_address = await building_detector.resolve_building_geometry(
+            house_in.latitude, house_in.longitude
+        )
+    except Exception:  # noqa: BLE001 - best effort enrichment
+        logger.exception(
+            "Failed to resolve address for coordinates lat=%s lon=%s",
+            house_in.latitude,
+            house_in.longitude,
+        )
+
+    house_data = house_in.dict()
+    if resolved_address:
+        house_data["address"] = resolved_address
+        logger.debug("Address resolved automatically: %s", resolved_address)
+
+    house = models.House(**house_data)
     db.add(house)
     db.commit()
     db.refresh(house)
