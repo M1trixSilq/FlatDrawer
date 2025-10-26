@@ -132,6 +132,19 @@ function openCreateModal(context) {
     return;
   }
 
+  const coords = Array.isArray(context.coords) ? [...context.coords] : context.coords;
+  const address = context.address ?? '';
+  const placeholder =
+    typeof context.addressPlaceholder === 'string'
+      ? context.addressPlaceholder
+      : address
+        ? 'Уточните адрес при необходимости'
+        : 'Адрес не найден. Укажите вручную';
+
+  activeCreationContext = {
+    coords,
+    address
+  };
   creationInProgress = false;
 
   const coords = Array.isArray(context.coords) ? [...context.coords] : context.coords;
@@ -153,13 +166,9 @@ function openCreateModal(context) {
   };
 
   if (elements.addressField) {
-    elements.addressField.value = initialAddress;
-    if (typeof placeholder === 'string' && placeholder) {
-      elements.addressField.placeholder = placeholder;
-    } else if (!initialAddress) {
-      elements.addressField.placeholder = 'Адрес не найден';
-    }
-    elements.addressField.classList.toggle('is-loading', isResolving && !initialAddress);
+    elements.addressField.value = address;
+    elements.addressField.placeholder = placeholder;
+    elements.addressField.classList.remove('is-loading');
   }
 
   if (elements.statusSelect) {
@@ -192,7 +201,7 @@ function closeCreateModal() {
   elements.container.setAttribute('aria-hidden', 'true');
   if (elements.addressField) {
     elements.addressField.value = '';
-    elements.addressField.placeholder = 'Определяем адрес...';
+    elements.addressField.placeholder = 'Адрес не найден. Укажите вручную';
     elements.addressField.classList.remove('is-loading');
   }
   activeCreationContext = null;
@@ -622,6 +631,10 @@ async function resolveHouseAddress(coords) {
     } catch (error) {
       console.warn(`Failed to resolve address via provider ${provider}`, error);
     }
+    return firstGeoObject.getAddressLine?.() || null;
+  } catch (error) {
+    console.error('Failed to resolve address via Yandex Maps', error);
+    return null;
   }
 
   console.error('Failed to resolve address via any Yandex Maps provider');
@@ -691,25 +704,17 @@ async function handleHouseDoubleClick(coords) {
   try {
     const address = await resolveHouseAddress(coords);
 
-    if (!activeCreationContext || activeCreationContext.requestId !== requestId) {
-      return;
-    }
+    openCreateModal({
+      coords,
+      address: address || '',
+      addressPlaceholder: address
+        ? 'Уточните адрес при необходимости'
+        : 'Адрес не найден. Укажите вручную'
+    });
 
     if (!address) {
-      updateCreationAddress('', {
-        requestId,
-        isResolving: false,
-        placeholder: 'Адрес не найден. Введите вручную'
-      });
       showNotification('Не удалось автоматически определить адрес. Укажите его вручную.', 'error');
-      return;
     }
-
-    updateCreationAddress(address, {
-      requestId,
-      isResolving: false,
-      placeholder: 'Уточните адрес при необходимости'
-    });
   } catch (error) {
     console.error(error);
     if (activeCreationContext && activeCreationContext.requestId === requestId) {
