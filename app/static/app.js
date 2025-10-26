@@ -715,10 +715,10 @@ async function handleHouseDoubleClick(coords) {
   try {
     const address = await resolveHouseAddress(coords);
 
-    openCreateModal({
-      coords,
-      address: address || '',
-      addressPlaceholder: address
+    updateCreationAddress(address || '', {
+      requestId,
+      isResolving: false,
+      placeholder: address
         ? 'Уточните адрес при необходимости'
         : 'Адрес не найден. Укажите вручную'
     });
