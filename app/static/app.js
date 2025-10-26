@@ -641,13 +641,11 @@ async function resolveHouseAddress(coords) {
       if (address) {
         return address;
       }
+
+      return firstGeoObject.getAddressLine?.() || null;
     } catch (error) {
       console.warn(`Failed to resolve address via provider ${provider}`, error);
     }
-    return firstGeoObject.getAddressLine?.() || null;
-  } catch (error) {
-    console.error('Failed to resolve address via Yandex Maps', error);
-    return null;
   }
 
   console.error('Failed to resolve address via any Yandex Maps provider');
