@@ -328,25 +328,52 @@ async function handleCreateModalSubmit(event) {
   }
 }
 
-function waitForYandexMaps(timeoutMs = 8000) {
+function waitForYandexMaps() {
   return new Promise((resolve, reject) => {
-    const start = Date.now();
+    let intervalId = null;
 
-    function checkReady() {
+    const clearWatcher = () => {
+      if (intervalId !== null) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
+    const handleReady = () => {
       if (window.ymaps && typeof window.ymaps.ready === 'function') {
-        resolve();
-        return;
+        clearWatcher();
+        resolve(window.ymaps);
+        return true;
       }
+      return false;
+    };
 
-      if (Date.now() - start >= timeoutMs) {
-        reject(new Error('Yandex Maps script not loaded'));
-        return;
-      }
-
-      setTimeout(checkReady, 200);
+    if (handleReady()) {
+      return;
     }
 
-    checkReady();
+    intervalId = setInterval(handleReady, 200);
+
+    const mapScript = document.querySelector('script[src*="api-maps.yandex.ru"]');
+    if (!mapScript) {
+      clearWatcher();
+      const error = new Error('Yandex Maps script tag not found');
+      error.code = 'SCRIPT_NOT_FOUND';
+      reject(error);
+      return;
+    }
+
+    mapScript.addEventListener('load', handleReady, { once: true });
+    mapScript.addEventListener(
+      'error',
+      () => {
+        clearWatcher();
+        const error = new Error('Yandex Maps script failed to load');
+        error.code = 'SCRIPT_FAILED';
+        reject(error);
+      },
+      { once: true }
+    );
   });
 }
 
@@ -853,7 +880,11 @@ function bootstrapApplication() {
     .then(() => ymaps.ready(initMap))
     .catch((error) => {
       console.error(error);
-      showNotification('Скрипт Яндекс.Карт не загрузился', 'error');
+      const message =
+        error && error.code === 'SCRIPT_NOT_FOUND'
+          ? 'Скрипт Яндекс.Карт не найден на странице'
+          : 'Скрипт Яндекс.Карт не загрузился';
+      showNotification(message, 'error');
     });
 }
 
