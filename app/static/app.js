@@ -708,47 +708,91 @@ function focusOnDensestArea(houses = []) {
     return;
   }
 
-  const cellSize = 0.25;
-  const grid = new Map();
+  const ymapsGeo = window.ymaps?.coordSystem?.geo;
 
-  for (const house of normalized) {
-    const latKey = Math.round(house.latitude / cellSize);
-    const lonKey = Math.round(house.longitude / cellSize);
-    const key = `${latKey}:${lonKey}`;
-    if (!grid.has(key)) {
-      grid.set(key, []);
+  const moveToBounds = (points) => {
+    const boundsFunction = window.ymaps?.util?.bounds?.fromPoints;
+    const bounds = typeof boundsFunction === 'function' ? boundsFunction(points) : null;
+
+    if (bounds) {
+      mapInstance.setBounds(bounds, { checkZoomRange: true, duration: 300, zoomMargin: 40 });
+    } else {
+      const average = points.reduce(
+        (acc, [lat, lon]) => {
+          return { latitude: acc.latitude + lat, longitude: acc.longitude + lon };
+        },
+        { latitude: 0, longitude: 0 }
+      );
+      const center = [average.latitude / points.length, average.longitude / points.length];
+      mapInstance.setCenter(center, Math.max(mapInstance.getZoom() || 0, 14), { duration: 300 });
     }
-    grid.get(key).push(house);
+  };
+
+  if (!ymapsGeo || typeof ymapsGeo.getDistance !== 'function') {
+    moveToBounds(normalized.map((item) => [item.latitude, item.longitude]));
+    return;
   }
 
-  let densestGroup = null;
-  grid.forEach((group) => {
-    if (!densestGroup || group.length > densestGroup.length) {
-      densestGroup = group;
+  const radii = [200, 400, 800, 1600];
+  let bestCluster = null;
+
+  const calculateAverageDistance = (anchor, members) => {
+    if (!members.length) {
+      return Infinity;
     }
-  });
+    const anchorPoint = [anchor.latitude, anchor.longitude];
+    const totalDistance = members.reduce((acc, member) => {
+      const distance = ymapsGeo.getDistance(anchorPoint, [member.latitude, member.longitude]);
+      return Number.isFinite(distance) ? acc + distance : acc;
+    }, 0);
+    return totalDistance / members.length;
+  };
 
-  const targetGroup = densestGroup && densestGroup.length ? densestGroup : normalized;
+  for (const radius of radii) {
+    for (const anchor of normalized) {
+      const anchorPoint = [anchor.latitude, anchor.longitude];
+      const members = normalized.filter((candidate) => {
+        const distance = ymapsGeo.getDistance(anchorPoint, [candidate.latitude, candidate.longitude]);
+        return Number.isFinite(distance) && distance <= radius;
+      });
 
-  if (targetGroup.length === 1) {
-    const [single] = targetGroup;
+      if (members.length <= 1 && normalized.length > 1) {
+        continue;
+      }
+
+      const averageDistance = calculateAverageDistance(anchor, members);
+      const bestCount = bestCluster ? bestCluster.members.length : 0;
+
+      const isBetterCluster =
+        !bestCluster ||
+        members.length > bestCount ||
+        (members.length === bestCount && averageDistance < bestCluster.averageDistance) ||
+        (members.length === bestCount && averageDistance === bestCluster.averageDistance && radius < bestCluster.radius);
+
+      if (isBetterCluster) {
+        bestCluster = { members, radius, averageDistance };
+      }
+    }
+
+    if (bestCluster && bestCluster.members.length >= 3) {
+      break;
+    }
+  }
+
+  const targetMembers =
+    bestCluster && (bestCluster.members.length > 1 || normalized.length === 1)
+      ? bestCluster.members
+      : normalized;
+
+  if (targetMembers.length === 1) {
+    const [single] = targetMembers;
     mapInstance.setCenter([single.latitude, single.longitude], Math.max(mapInstance.getZoom() || 0, 16), {
       duration: 300
     });
     return;
   }
 
-  const points = targetGroup.map((item) => [item.latitude, item.longitude]);
-  const boundsAvailable =
-    window.ymaps &&
-    window.ymaps.util &&
-    window.ymaps.util.bounds &&
-    typeof window.ymaps.util.bounds.fromPoints === 'function';
-  const bounds = boundsAvailable ? window.ymaps.util.bounds.fromPoints(points) : null;
-
-  if (bounds) {
-    mapInstance.setBounds(bounds, { checkZoomRange: true, duration: 300, zoomMargin: 40 });
-  }
+  moveToBounds(targetMembers.map((item) => [item.latitude, item.longitude]));
 }
 
 async function initMap() {
