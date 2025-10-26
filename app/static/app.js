@@ -5,10 +5,11 @@ const STATUS_COLORS = {
 };
 
 const COMMENT_ZOOM_THRESHOLD = 15;
+const AUTO_OPEN_ZOOM_THRESHOLD = COMMENT_ZOOM_THRESHOLD;
+const AUTO_OPEN_DISTANCE_METERS = 200;
 
 let mapInstance;
 let openHouseId = null;
-
 const houseState = new Map();
 const placemarkState = new Map();
 const commentsCache = new Map();
@@ -39,6 +40,14 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+function formatDateToMoscow(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  return date.toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
 }
 
 function showNotification(message, type = 'success') {
@@ -356,9 +365,11 @@ async function loadHouses() {
       applyStatusStyleToPlacemark(placemark, house.status);
     }
     updateAllPlacemarkVisibility();
+    return houses;
   } catch (error) {
     console.error(error);
     showNotification(error.message, 'error');
+    return [];
   }
 }
 
@@ -379,8 +390,7 @@ function renderBalloonContent(house, comments = [], options = {}) {
           .map(
             (comment) => `
               <div class="comment-item">
-                <strong>${escapeHtml(comment.author || 'Аноним')}</strong>
-                <div class="comment-meta">${new Date(comment.created_at).toLocaleString('ru-RU')}</div>
+                <div class="comment-meta">${formatDateToMoscow(comment.created_at)}</div>
                 <div class="comment-text">${escapeHtml(comment.text)}</div>
               </div>
             `
@@ -393,7 +403,6 @@ function renderBalloonContent(house, comments = [], options = {}) {
   const commentForm = enableComments
     ? `
       <form id="comment-form-${house.id}" class="comment-form">
-        <input type="text" name="author" placeholder="Ваше имя (необязательно)" maxlength="255" />
         <textarea name="text" placeholder="Комментарий" required maxlength="1000"></textarea>
         <button type="submit">Добавить комментарий</button>
       </form>
@@ -470,8 +479,7 @@ function attachBalloonEvents(house, placemark, comments) {
       const formData = new FormData(commentForm);
       const payload = {
         house_id: house.id,
-        text: formData.get('text'),
-        author: formData.get('author') || null
+        text: formData.get('text')
       };
 
       try {
@@ -621,6 +629,128 @@ async function submitComment(payload) {
   return await response.json();
 }
 
+function autoOpenHouseNearCenter(currentZoom) {
+  if (!mapInstance || !window.ymaps) {
+    return;
+  }
+
+  if (typeof currentZoom !== 'number' || currentZoom < AUTO_OPEN_ZOOM_THRESHOLD) {
+    return;
+  }
+
+  const center = mapInstance.getCenter();
+  if (!Array.isArray(center)) {
+    return;
+  }
+
+  const ymapsGeo = window.ymaps && window.ymaps.coordSystem && window.ymaps.coordSystem.geo;
+  if (!ymapsGeo || typeof ymapsGeo.getDistance !== 'function') {
+    return;
+  }
+
+  let candidate = null;
+
+  placemarkState.forEach((placemark, houseId) => {
+    const house = houseState.get(houseId);
+    if (!house || !placemark) {
+      return;
+    }
+
+    const isVisible = placemark.options.get('visible');
+    if (isVisible === false) {
+      return;
+    }
+
+    const coords =
+      placemark.geometry && typeof placemark.geometry.getCoordinates === 'function'
+        ? placemark.geometry.getCoordinates()
+        : null;
+
+    if (!Array.isArray(coords)) {
+      return;
+    }
+
+    const distance = ymapsGeo.getDistance(center, coords);
+    if (!Number.isFinite(distance)) {
+      return;
+    }
+
+    if (!candidate || distance < candidate.distance) {
+      candidate = { house, placemark, distance };
+    }
+  });
+
+  if (!candidate || candidate.distance > AUTO_OPEN_DISTANCE_METERS) {
+    return;
+  }
+
+  if (openHouseId === candidate.house.id) {
+    return;
+  }
+
+  openHouseBalloon(candidate.house, candidate.placemark);
+}
+
+function focusOnDensestArea(houses = []) {
+  if (!mapInstance || !window.ymaps || !Array.isArray(houses) || !houses.length) {
+    return;
+  }
+
+  const normalized = houses
+    .map((house) => ({
+      id: house.id,
+      latitude: Number(house.latitude),
+      longitude: Number(house.longitude)
+    }))
+    .filter((item) => Number.isFinite(item.latitude) && Number.isFinite(item.longitude));
+
+  if (!normalized.length) {
+    return;
+  }
+
+  const cellSize = 0.25;
+  const grid = new Map();
+
+  for (const house of normalized) {
+    const latKey = Math.round(house.latitude / cellSize);
+    const lonKey = Math.round(house.longitude / cellSize);
+    const key = `${latKey}:${lonKey}`;
+    if (!grid.has(key)) {
+      grid.set(key, []);
+    }
+    grid.get(key).push(house);
+  }
+
+  let densestGroup = null;
+  grid.forEach((group) => {
+    if (!densestGroup || group.length > densestGroup.length) {
+      densestGroup = group;
+    }
+  });
+
+  const targetGroup = densestGroup && densestGroup.length ? densestGroup : normalized;
+
+  if (targetGroup.length === 1) {
+    const [single] = targetGroup;
+    mapInstance.setCenter([single.latitude, single.longitude], Math.max(mapInstance.getZoom() || 0, 16), {
+      duration: 300
+    });
+    return;
+  }
+
+  const points = targetGroup.map((item) => [item.latitude, item.longitude]);
+  const boundsAvailable =
+    window.ymaps &&
+    window.ymaps.util &&
+    window.ymaps.util.bounds &&
+    typeof window.ymaps.util.bounds.fromPoints === 'function';
+  const bounds = boundsAvailable ? window.ymaps.util.bounds.fromPoints(points) : null;
+
+  if (bounds) {
+    mapInstance.setBounds(bounds, { checkZoomRange: true, duration: 300, zoomMargin: 40 });
+  }
+}
+
 async function initMap() {
   const mapElement = document.getElementById('map');
   if (!mapElement) {
@@ -645,11 +775,29 @@ async function initMap() {
   mapInstance.events.add('boundschange', (event) => {
     const newZoom = event.get('newZoom');
     const oldZoom = event.get('oldZoom');
-    if (typeof newZoom !== 'number' || typeof oldZoom !== 'number' || newZoom === oldZoom) {
+    const newCenter = event.get('newCenter');
+    const oldCenter = event.get('oldCenter');
+
+    const centerChanged =
+      Array.isArray(newCenter) && Array.isArray(oldCenter)
+        ? newCenter.some((coord, index) => {
+            const previous = oldCenter[index];
+            if (typeof coord !== 'number' || typeof previous !== 'number') {
+              return false;
+            }
+            return Math.abs(coord - previous) > 1e-6;
+          })
+        : Array.isArray(newCenter);
+
+    const newZoomIsNumber = typeof newZoom === 'number';
+    const oldZoomIsNumber = typeof oldZoom === 'number';
+    const zoomChanged = newZoomIsNumber && oldZoomIsNumber && newZoom !== oldZoom;
+
+    if (!zoomChanged && !centerChanged) {
       return;
     }
 
-    if (openHouseId !== null) {
+    if (zoomChanged && openHouseId !== null) {
       const crossedThreshold =
         (oldZoom < COMMENT_ZOOM_THRESHOLD && newZoom >= COMMENT_ZOOM_THRESHOLD) ||
         (oldZoom >= COMMENT_ZOOM_THRESHOLD && newZoom < COMMENT_ZOOM_THRESHOLD);
@@ -662,6 +810,11 @@ async function initMap() {
         }
       }
     }
+
+    const zoomForAutoOpen = newZoomIsNumber ? newZoom : mapInstance.getZoom();
+    if (typeof zoomForAutoOpen === 'number' && zoomForAutoOpen >= AUTO_OPEN_ZOOM_THRESHOLD && (zoomChanged || centerChanged)) {
+      autoOpenHouseNearCenter(zoomForAutoOpen);
+    }
   });
 
   mapInstance.events.add('dblclick', (event) => {
@@ -671,8 +824,10 @@ async function initMap() {
     handleHouseDoubleClick(coords);
   });
 
-  loadHouses();
+  const houses = await loadHouses();
+  focusOnDensestArea(houses);
 }
+
 
 document.addEventListener('DOMContentLoaded', () => {
   ensureCreationModalElements();
