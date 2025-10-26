@@ -22,7 +22,8 @@ const creationModal = {
   commentInput: null,
   submitButton: null,
   addressField: null,
-  initialized: false
+  initialized: false,
+  addressFieldListenerAttached: false
 };
 
 let activeCreationContext = null;
@@ -87,6 +88,17 @@ function ensureCreationModalElements() {
   creationModal.commentInput = document.getElementById('create-modal-comment');
   creationModal.submitButton = creationModal.form?.querySelector('button[type="submit"]') ?? null;
   creationModal.addressField = document.getElementById('create-modal-address');
+
+  if (creationModal.addressField && !creationModal.addressFieldListenerAttached) {
+    creationModal.addressField.addEventListener('input', (event) => {
+      if (!activeCreationContext) {
+        return;
+      }
+      activeCreationContext.address = event.target.value;
+    });
+    creationModal.addressFieldListenerAttached = true;
+  }
+
   creationModal.closeButtons = Array.from(
     creationModal.container?.querySelectorAll('[data-modal-close]') ?? []
   );
@@ -120,11 +132,25 @@ function openCreateModal(context) {
     return;
   }
 
-  activeCreationContext = context;
+  const coords = Array.isArray(context.coords) ? [...context.coords] : context.coords;
+  const address = context.address ?? '';
+  const placeholder =
+    typeof context.addressPlaceholder === 'string'
+      ? context.addressPlaceholder
+      : address
+        ? 'Уточните адрес при необходимости'
+        : 'Адрес не найден. Укажите вручную';
+
+  activeCreationContext = {
+    coords,
+    address
+  };
   creationInProgress = false;
 
   if (elements.addressField) {
-    elements.addressField.textContent = context.address || 'Адрес не найден';
+    elements.addressField.value = address;
+    elements.addressField.placeholder = placeholder;
+    elements.addressField.classList.remove('is-loading');
   }
 
   if (elements.statusSelect) {
@@ -155,6 +181,11 @@ function closeCreateModal() {
 
   elements.container.classList.add('hidden');
   elements.container.setAttribute('aria-hidden', 'true');
+  if (elements.addressField) {
+    elements.addressField.value = '';
+    elements.addressField.placeholder = 'Адрес не найден. Укажите вручную';
+    elements.addressField.classList.remove('is-loading');
+  }
   activeCreationContext = null;
   creationInProgress = false;
 }
@@ -169,12 +200,28 @@ async function handleCreateModalSubmit(event) {
 
   const status = elements.statusSelect ? elements.statusSelect.value : 'yellow';
   const comment = elements.commentInput ? elements.commentInput.value.trim() : '';
-  const { address, coords } = activeCreationContext;
+  const coords = Array.isArray(activeCreationContext.coords)
+    ? [...activeCreationContext.coords]
+    : activeCreationContext.coords;
+
+  const addressFieldValue = elements.addressField
+    ? elements.addressField.value.trim()
+    : (activeCreationContext.address || '').trim();
+
+  if (addressFieldValue.length < 3) {
+    showNotification('Укажите корректный адрес дома', 'error');
+    if (elements.addressField) {
+      elements.addressField.focus();
+    }
+    return;
+  }
 
   if (!Array.isArray(coords) || coords.length !== 2) {
     showNotification('Не удалось определить координаты для новой точки', 'error');
     return;
   }
+
+  activeCreationContext.address = addressFieldValue;
 
   creationInProgress = true;
   if (elements.submitButton) {
@@ -183,7 +230,7 @@ async function handleCreateModalSubmit(event) {
 
   try {
     const payload = {
-      address,
+      address: addressFieldValue,
       latitude: Number(coords[0]),
       longitude: Number(coords[1]),
       status
@@ -510,7 +557,7 @@ async function resolveHouseAddress(coords) {
     if (!firstGeoObject) {
       return null;
     }
-    return firstGeoObject.getAddressLine();
+    return firstGeoObject.getAddressLine?.() || null;
   } catch (error) {
     console.error('Failed to resolve address via Yandex Maps', error);
     return null;
@@ -568,8 +615,19 @@ async function handleHouseDoubleClick(coords) {
   }
 
   try {
-    const address = (await resolveHouseAddress(coords)) || 'Адрес не найден';
-    openCreateModal({ address, coords });
+    const address = await resolveHouseAddress(coords);
+
+    openCreateModal({
+      coords,
+      address: address || '',
+      addressPlaceholder: address
+        ? 'Уточните адрес при необходимости'
+        : 'Адрес не найден. Укажите вручную'
+    });
+
+    if (!address) {
+      showNotification('Не удалось автоматически определить адрес. Укажите его вручную.', 'error');
+    }
   } catch (error) {
     console.error(error);
     showNotification('Не удалось определить дом. Попробуйте ещё раз.', 'error');
