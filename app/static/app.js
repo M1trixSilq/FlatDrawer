@@ -656,7 +656,6 @@ async function initMap() {
     [52.9, 40.0]
   ];
   mapInstance.setBounds(lipetskBounds, { checkZoomRange: true, duration: 0 });
-  mapInstance.options.set('restrictMapArea', lipetskBounds);
 
   mapInstance.options.set('doubleClickZoom', false);
 
