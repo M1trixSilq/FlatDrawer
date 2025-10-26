@@ -67,12 +67,24 @@ async def create_house(
             house_in.longitude,
         )
 
-    house_data = house_in.dict()
+    house_data = house_in.dict(exclude_unset=True)
     if resolved_address:
         house_data["address"] = resolved_address
         logger.debug("Address resolved automatically: %s", resolved_address)
     else:
-        logger.debug("Using submitted address for lat=%s lon=%s", house_in.latitude, house_in.longitude)
+        submitted_address = house_data.get("address")
+        if submitted_address:
+            logger.debug(
+                "Using submitted address for lat=%s lon=%s",
+                house_in.latitude,
+                house_in.longitude,
+            )
+        else:
+            fallback_address = "Адрес не определен"
+            house_data["address"] = fallback_address
+            logger.debug(
+                "Fallback address applied for lat=%s lon=%s", house_in.latitude, house_in.longitude
+            )
 
     house = models.House(**house_data)
     db.add(house)

@@ -24,7 +24,6 @@ class CommentRead(CommentBase):
 
 
 class HouseBase(BaseModel):
-    address: str = Field(..., min_length=3, max_length=255)
     latitude: float
     longitude: float
     status: HouseStatus = Field(default=HouseStatus.YELLOW)
@@ -43,7 +42,7 @@ class HouseBase(BaseModel):
 
 
 class HouseCreate(HouseBase):
-    pass
+    address: Optional[str] = Field(default=None, min_length=3, max_length=255)
 
 
 class HouseUpdate(BaseModel):
@@ -66,6 +65,7 @@ class HouseUpdate(BaseModel):
 
 
 class HouseRead(HouseBase):
+    address: str = Field(..., max_length=255)
     id: int
     created_at: datetime
     updated_at: datetime
